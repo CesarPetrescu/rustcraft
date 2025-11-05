@@ -20,6 +20,9 @@
 - **GPU Support**: Modern graphics drivers supporting Vulkan, Metal, DirectX 12, or other WebGPU-compatible APIs
 - **Platform-Specific Requirements**:
   - **Linux**: Install `vulkan-sdk` or appropriate Mesa drivers for your hardware
+  - **Windows**: Ensure DirectX 12 or Vulkan drivers are up to date
+  - **macOS**: Metal support is built-in on modern systems
+
 ### Build & Run
 
 ```bash
@@ -35,9 +38,6 @@ cargo run
 ```
 
 **Note**: The first launch compiles shaders and builds initial chunk meshes, resulting in a longer startup time. Release builds are highly recommended for maintaining real-time chunk update performance.
-```
-
-The first launch compiles shaders and builds the starting chunk meshes, so expect a longer cold start. A release build is highly recommended to stay above real-time chunk update budgets.
 
 ## Controls
 
