@@ -1,0 +1,18 @@
+[package]
+name = "minecraft_clone"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+npu = []
+
+[dependencies]
+winit = "0.29"
+wgpu = "0.19"
+bytemuck = { version = "1.14", features = ["derive"] }
+cgmath = "0.18"
+noise = "0.8"
+pollster = "0.3"
+anyhow = "1.0"
+rand = { version = "0.8", features = ["small_rng"] }

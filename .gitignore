@@ -1,0 +1,39 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Cargo lock file (uncomment if this is a binary crate)
+# Cargo.lock
+
+# Debug and profiling files
+/debug/
+*.csv
+
+# Patch files
+*.patch
+*.diff
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS generated files
+Thumbs.db
+.DS_Store
+
+# Backup files
+*.bak
+*.tmp
+*~
+
+# Log files
+*.log
+
+# Local environment files
+.env
+.env.local
