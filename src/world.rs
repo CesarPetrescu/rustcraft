@@ -1357,20 +1357,22 @@ impl World {
             x: chunk_x,
             z: chunk_z,
         };
-        let block = self
-            .chunks
-            .get(&pos)
-            .map(|chunk| chunk.get_block(local_x, local_y, local_z))
-            .unwrap_or(BlockType::Air);
 
-        if matches!(block, BlockType::Air) {
-            if self.get_fluid_amount(x, y, z) > 0 {
-                BlockType::Water
+        // Optimize: do both block and fluid lookup in single chunk access
+        if let Some(chunk) = self.chunks.get(&pos) {
+            let block = chunk.get_block(local_x, local_y, local_z);
+            if matches!(block, BlockType::Air) {
+                // Check if there's fluid without doing another chunk lookup
+                if chunk.get_fluid(local_x, local_y, local_z) > 0 {
+                    BlockType::Water
+                } else {
+                    BlockType::Air
+                }
             } else {
-                BlockType::Air
+                block
             }
         } else {
-            block
+            BlockType::Air
         }
     }
 

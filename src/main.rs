@@ -1531,6 +1531,7 @@ impl<'window> State<'window> {
                                 .iter()
                                 .position(|rect| point_in_rect(point, *rect))
                             {
+                                // Toggle category if clicking the active one, otherwise switch to new category
                                 let new_category = if chip_index == self.inventory_active_category
                                     && chip_index != 0
                                 {
@@ -1538,14 +1539,14 @@ impl<'window> State<'window> {
                                 } else {
                                     chip_index
                                 };
+
+                                // Only reset scroll if changing category
                                 if new_category != self.inventory_active_category {
-                                    self.inventory_active_category = new_category;
                                     self.inventory_palette_scroll = 0.0;
-                                    self.refresh_palette_filter();
-                                } else {
-                                    self.inventory_active_category = new_category;
-                                    self.refresh_palette_filter();
                                 }
+
+                                self.inventory_active_category = new_category;
+                                self.refresh_palette_filter();
                                 return true;
                             }
                         }
