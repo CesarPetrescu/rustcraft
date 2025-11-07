@@ -426,11 +426,11 @@ impl WorldGenContext {
                 | BiomeType::Taiga
                 | BiomeType::Tundra
         ) {
-            let foothill = WorldGenContext::smoothstep(0.6, 0.78, altitude);
+            let foothill = WorldGenContext::smoothstep(0.65, 0.82, altitude);
             if foothill > 0.0 {
-                height_offset += 10.0 * foothill;
-                height_scale += 16.0 * foothill * foothill;
-                detail_amplitude += 2.0 * foothill;
+                height_offset += 5.0 * foothill;
+                height_scale += 8.0 * foothill * foothill;
+                detail_amplitude += 1.5 * foothill;
             }
         }
 
@@ -496,10 +496,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 3,
                 sky_color: [0.52, 0.73, 0.86],
                 flower_density: 0.12,
-                height_offset: -10.0,
-                height_scale: 26.0,
-                detail_amplitude: 8.0,
-                continental_influence: 24.0,
+                height_offset: -5.0,
+                height_scale: 12.0,
+                detail_amplitude: 4.0,
+                continental_influence: 10.0,
                 river_bed: BlockType::Sand,
             },
             BiomeType::Desert => BiomeConfig {
@@ -513,10 +513,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 2,
                 sky_color: [0.82, 0.76, 0.58],
                 flower_density: 0.0,
-                height_offset: -18.0,
-                height_scale: 24.0,
-                detail_amplitude: 6.0,
-                continental_influence: 26.0,
+                height_offset: -8.0,
+                height_scale: 10.0,
+                detail_amplitude: 3.0,
+                continental_influence: 8.0,
                 river_bed: BlockType::Sand,
             },
             BiomeType::Forest => BiomeConfig {
@@ -531,9 +531,9 @@ impl WorldGenContext {
                 sky_color: [0.48, 0.68, 0.56],
                 flower_density: 0.08,
                 height_offset: 0.0,
-                height_scale: 32.0,
-                detail_amplitude: 10.0,
-                continental_influence: 28.0,
+                height_scale: 14.0,
+                detail_amplitude: 5.0,
+                continental_influence: 12.0,
                 river_bed: BlockType::Dirt,
             },
             BiomeType::Mountain => BiomeConfig {
@@ -547,10 +547,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 2,
                 sky_color: [0.67, 0.75, 0.88],
                 flower_density: 0.0,
-                height_offset: 40.0,
-                height_scale: 80.0,
-                detail_amplitude: 18.0,
-                continental_influence: 64.0,
+                height_offset: 20.0,
+                height_scale: 35.0,
+                detail_amplitude: 8.0,
+                continental_influence: 25.0,
                 river_bed: BlockType::Stone,
             },
             BiomeType::Swamp => BiomeConfig {
@@ -564,10 +564,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 3,
                 sky_color: [0.36, 0.46, 0.40],
                 flower_density: 0.02,
-                height_offset: -26.0,
-                height_scale: 16.0,
-                detail_amplitude: 4.0,
-                continental_influence: 14.0,
+                height_offset: -12.0,
+                height_scale: 8.0,
+                detail_amplitude: 2.0,
+                continental_influence: 6.0,
                 river_bed: BlockType::Dirt,
             },
             BiomeType::Tundra => BiomeConfig {
@@ -581,10 +581,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 3,
                 sky_color: [0.74, 0.81, 0.88],
                 flower_density: 0.0,
-                height_offset: 24.0,
-                height_scale: 56.0,
-                detail_amplitude: 12.0,
-                continental_influence: 36.0,
+                height_offset: 10.0,
+                height_scale: 22.0,
+                detail_amplitude: 5.0,
+                continental_influence: 15.0,
                 river_bed: BlockType::Stone,
             },
             BiomeType::Jungle => BiomeConfig {
@@ -598,10 +598,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 4,
                 sky_color: [0.43, 0.70, 0.52],
                 flower_density: 0.14,
-                height_offset: 12.0,
-                height_scale: 36.0,
-                detail_amplitude: 12.0,
-                continental_influence: 26.0,
+                height_offset: 5.0,
+                height_scale: 16.0,
+                detail_amplitude: 6.0,
+                continental_influence: 12.0,
                 river_bed: BlockType::Dirt,
             },
             BiomeType::Mesa => BiomeConfig {
@@ -615,10 +615,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 2,
                 sky_color: [0.82, 0.58, 0.42],
                 flower_density: 0.01,
-                height_offset: 28.0,
-                height_scale: 48.0,
-                detail_amplitude: 10.0,
-                continental_influence: 38.0,
+                height_offset: 12.0,
+                height_scale: 20.0,
+                detail_amplitude: 5.0,
+                continental_influence: 15.0,
                 river_bed: BlockType::Sand,
             },
             BiomeType::Savanna => BiomeConfig {
@@ -632,10 +632,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 2,
                 sky_color: [0.78, 0.72, 0.54],
                 flower_density: 0.02,
-                height_offset: -4.0,
-                height_scale: 22.0,
-                detail_amplitude: 7.0,
-                continental_influence: 22.0,
+                height_offset: -2.0,
+                height_scale: 10.0,
+                detail_amplitude: 3.0,
+                continental_influence: 8.0,
                 river_bed: BlockType::Sand,
             },
             BiomeType::Taiga => BiomeConfig {
@@ -649,10 +649,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 3,
                 sky_color: [0.58, 0.74, 0.78],
                 flower_density: 0.0,
-                height_offset: 12.0,
-                height_scale: 40.0,
-                detail_amplitude: 10.0,
-                continental_influence: 32.0,
+                height_offset: 5.0,
+                height_scale: 18.0,
+                detail_amplitude: 5.0,
+                continental_influence: 12.0,
                 river_bed: BlockType::Stone,
             },
             BiomeType::Meadow => BiomeConfig {
@@ -666,10 +666,10 @@ impl WorldGenContext {
                 tree_canopy_layers: 2,
                 sky_color: [0.62, 0.78, 0.72],
                 flower_density: 0.18,
-                height_offset: 18.0,
-                height_scale: 34.0,
-                detail_amplitude: 9.0,
-                continental_influence: 30.0,
+                height_offset: 8.0,
+                height_scale: 15.0,
+                detail_amplitude: 4.0,
+                continental_influence: 12.0,
                 river_bed: BlockType::Sand,
             },
         }
@@ -1088,7 +1088,15 @@ impl World {
     }
 
     pub fn new() -> Self {
-        let seed = 0x5A5A_1234u64;
+        // Generate a random seed based on system time and random source
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let time_seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let random_component = rand::random::<u32>() as u64;
+        let seed = time_seed.wrapping_mul(0x5DEECE66D).wrapping_add(random_component);
+
         let gen = Arc::new(WorldGenContext::new(seed));
         Self {
             chunks: HashMap::new(),

@@ -107,7 +107,7 @@ impl ElectricalComponent {
     }
 
     pub fn connectors(self, axis: Axis, face: BlockFace) -> [bool; 6] {
-        let mut connectors = match self {
+        match self {
             Self::Wire | Self::Resistor => {
                 let mut connectors = axis_pair_connectors(axis);
                 let secondary_axis = Axis::all()
@@ -122,18 +122,24 @@ impl ElectricalComponent {
                         }
                     }
                 }
+                // Also enable the mount face connector
+                connectors[face_index(face)] = true;
                 connectors
             }
-            Self::VoltageSource => axis_pair_connectors(axis),
-            Self::Ground => {
-                // Ground only connects from its mount face (where it's attached to the circuit)
-                // Not bidirectional - provides ground reference point only
-                [false; 6]
+            Self::VoltageSource => {
+                let mut connectors = axis_pair_connectors(axis);
+                // Also enable the mount face connector
+                connectors[face_index(face)] = true;
+                connectors
             }
-        };
-
-        connectors[face_index(face)] = true;
-        connectors
+            Self::Ground => {
+                // Ground connects from its mount face to any adjacent components
+                // It acts as a ground reference point for the circuit
+                let mut connectors = [false; 6];
+                connectors[face_index(face)] = true;
+                connectors
+            }
+        }
     }
 
     pub fn default_axis(self) -> Axis {
@@ -146,8 +152,8 @@ impl ElectricalComponent {
     pub fn default_params(self) -> ComponentParams {
         match self {
             Self::Wire => ComponentParams::wire(0.05, 30.0),
-            Self::Resistor => ComponentParams::resistor(220.0, 2.0),
-            Self::VoltageSource => ComponentParams::voltage_source(12.0, 0.2, 5.0),
+            Self::Resistor => ComponentParams::resistor(100.0, 2.0),
+            Self::VoltageSource => ComponentParams::voltage_source(12.0, 0.1, 10.0),
             Self::Ground => ComponentParams::ground(),
         }
     }
@@ -296,7 +302,12 @@ impl ElectricalSystem {
         );
 
         if let Some(component) = ElectricalComponent::from_block(block) {
-            let face = face_hint.unwrap_or(BlockFace::Top);
+            let default_face = if component == ElectricalComponent::Ground {
+                BlockFace::Bottom
+            } else {
+                BlockFace::Top
+            };
+            let face = face_hint.unwrap_or(default_face);
             let mut axis = self.infer_axis(world_pos, face, component, axis_hint);
             axis = sanitize_axis(axis, face, component);
             let params = params_override.unwrap_or_else(|| component.default_params());
@@ -746,14 +757,41 @@ impl ElectricalSystem {
                 .sum::<f32>();
 
             // Ensure minimum resistance to avoid division by zero or unrealistic currents
-            let effective_resistance = total_resistance.max(0.05);
+            let effective_resistance = total_resistance.max(0.01);
 
-            // Calculate current - only flows if we have a complete loop (source AND ground)
-            let current = if has_loop {
+            // Calculate theoretical current - only flows if we have a complete loop (source AND ground)
+            let mut current = if has_loop {
                 source_voltage / effective_resistance
             } else {
                 0.0
             };
+
+            // Short circuit detection: Check if current exceeds any component's max_current
+            // Find the most restrictive current limit in the network
+            let mut is_short_circuit = false;
+            if current > 0.0 {
+                let min_max_current = network
+                    .elements
+                    .iter()
+                    .filter_map(|el| el.params.max_current_amps)
+                    .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+                if let Some(max_current) = min_max_current {
+                    if current > max_current {
+                        // Short circuit detected! Limit current to max or cut it off entirely
+                        // For realistic behavior, we'll cut the current to simulate a blown fuse/breaker
+                        is_short_circuit = true;
+                        current = 0.0; // Circuit breaker trips, no current flows
+                    }
+                }
+
+                // Additional check: if resistance is extremely low (< 0.1 ohms) and current is very high
+                // This catches cases where max_current might not be set properly
+                if total_resistance < 0.1 && current > 100.0 {
+                    is_short_circuit = true;
+                    current = 0.0;
+                }
+            }
 
             // Update telemetry for each element in the network
             for element in &network.elements {
@@ -762,7 +800,10 @@ impl ElectricalSystem {
                     face: element.face,
                 };
 
-                let voltage = if element.component == ElectricalComponent::VoltageSource {
+                let voltage = if is_short_circuit {
+                    // In a short circuit, voltage drops to near zero
+                    0.0
+                } else if element.component == ElectricalComponent::VoltageSource {
                     // Voltage source shows its source voltage
                     source_voltage
                 } else if let Some(resistance) = element.params.resistance_ohms {
