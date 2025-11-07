@@ -957,49 +957,61 @@ impl<'window> State<'window> {
                     hit.block_pos.2 + hit.normal.z as i32,
                 );
 
-                // Don't place block if player is in that position
+                // Don't place block if it would intersect with the player
+                // Player bounding box: feet at (camera.y - PLAYER_EYE_HEIGHT), head at (camera.y - PLAYER_EYE_HEIGHT + PLAYER_HEIGHT)
+                let player_feet_y = self.camera.position.y - PLAYER_EYE_HEIGHT;
+                let player_head_y = player_feet_y + PLAYER_HEIGHT;
+
+                // Define player bounding box with proper radius
                 let player_min = (
-                    self.camera.position.x.floor() as i32,
-                    self.camera.position.y.floor() as i32 - 1,
-                    self.camera.position.z.floor() as i32,
+                    (self.camera.position.x - PLAYER_RADIUS).floor() as i32,
+                    player_feet_y.floor() as i32,
+                    (self.camera.position.z - PLAYER_RADIUS).floor() as i32,
                 );
                 let player_max = (
-                    self.camera.position.x.floor() as i32,
-                    self.camera.position.y.floor() as i32 + 1,
-                    self.camera.position.z.floor() as i32,
+                    (self.camera.position.x + PLAYER_RADIUS).ceil() as i32,
+                    player_head_y.ceil() as i32,
+                    (self.camera.position.z + PLAYER_RADIUS).ceil() as i32,
                 );
 
-                if place_pos.0 < player_min.0
-                    || place_pos.0 > player_max.0
-                    || place_pos.1 < player_min.1
-                    || place_pos.1 > player_max.1
-                    || place_pos.2 < player_min.2
-                    || place_pos.2 > player_max.2
-                {
-                    let existing = self.world.get_block(place_pos.0, place_pos.1, place_pos.2);
-                    if existing.is_solid() {
-                        return;
-                    }
+                // Check if placement position is INSIDE the player's bounding box (prevent placement if true)
+                let intersects_player = place_pos.0 >= player_min.0
+                    && place_pos.0 <= player_max.0
+                    && place_pos.1 >= player_min.1
+                    && place_pos.1 <= player_max.1
+                    && place_pos.2 >= player_min.2
+                    && place_pos.2 <= player_max.2;
 
-                    if block_type == BlockType::Water {
-                        self.world.add_fluid(
-                            place_pos.0,
-                            place_pos.1,
-                            place_pos.2,
-                            MAX_FLUID_LEVEL,
-                        );
-                    } else {
-                        self.world.set_block_with_axis(
-                            place_pos.0,
-                            place_pos.1,
-                            place_pos.2,
-                            block_type,
-                            None,
-                            None,
-                        );
-                    }
-                    self.mark_block_dirty(place_pos.0, place_pos.1, place_pos.2);
+                if intersects_player {
+                    // Don't allow placing blocks inside the player
+                    return;
                 }
+
+                // Check if the target position already has a solid block
+                let existing = self.world.get_block(place_pos.0, place_pos.1, place_pos.2);
+                if existing.is_solid() {
+                    return;
+                }
+
+                // Place the block
+                if block_type == BlockType::Water {
+                    self.world.add_fluid(
+                        place_pos.0,
+                        place_pos.1,
+                        place_pos.2,
+                        MAX_FLUID_LEVEL,
+                    );
+                } else {
+                    self.world.set_block_with_axis(
+                        place_pos.0,
+                        place_pos.1,
+                        place_pos.2,
+                        block_type,
+                        None,
+                        None,
+                    );
+                }
+                self.mark_block_dirty(place_pos.0, place_pos.1, place_pos.2);
             }
         }
     }

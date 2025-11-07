@@ -67,8 +67,16 @@ impl FluidSystem {
                         WorkerCommand::Shutdown => break,
                     }
                 }
-            })
-            .expect("Failed to spawn fluid worker thread");
+            });
+
+        let handle = match handle {
+            Ok(h) => Some(h),
+            Err(e) => {
+                eprintln!("Warning: Failed to spawn fluid worker thread: {e}");
+                eprintln!("Fluid simulation will fall back to CPU processing");
+                None
+            }
+        };
 
         Self {
             sender: Some(command_tx),

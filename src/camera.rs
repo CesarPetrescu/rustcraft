@@ -331,13 +331,18 @@ impl CameraController {
             } else {
                 if self.velocity_y < 0.0 {
                     self.is_on_ground = true;
+                    // If player is stuck inside a block, try to push them out
+                    // Limit iterations to prevent performance issues
                     if check_collision(camera.position) {
                         let mut resolve_pos = camera.position;
-                        for _ in 0..80 {
+                        const MAX_RESOLVE_ITERATIONS: i32 = 15;
+                        const RESOLVE_STEP: f32 = 0.05; // Increased step size for faster resolution
+
+                        for _ in 0..MAX_RESOLVE_ITERATIONS {
                             if !check_collision(resolve_pos) {
                                 break;
                             }
-                            resolve_pos.y += 0.01;
+                            resolve_pos.y += RESOLVE_STEP;
                         }
                         camera.position = resolve_pos;
                     }

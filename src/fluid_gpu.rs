@@ -352,7 +352,14 @@ impl FluidGpu {
             let map_signal = Arc::clone(&map_signal);
             buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
                 let (lock, cvar) = &*map_signal;
-                let mut guard = lock.lock().expect("map_async poison");
+                // Handle mutex poisoning gracefully
+                let mut guard = match lock.lock() {
+                    Ok(g) => g,
+                    Err(poisoned) => {
+                        eprintln!("Warning: Mutex poisoned in map_async callback, recovering");
+                        poisoned.into_inner()
+                    }
+                };
                 *guard = Some(result);
                 cvar.notify_one();
             });
@@ -361,13 +368,27 @@ impl FluidGpu {
         device.poll(wgpu::Maintain::Wait);
 
         let (lock, cvar) = &*map_signal;
-        let mut guard = lock.lock().expect("map_async wait poison");
+        let mut guard = match lock.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                eprintln!("Warning: Mutex poisoned while waiting for map_async, recovering");
+                poisoned.into_inner()
+            }
+        };
+
         while guard.is_none() {
-            guard = cvar.wait(guard).expect("map_async wait poison");
+            guard = match cvar.wait(guard) {
+                Ok(g) => g,
+                Err(poisoned) => {
+                    eprintln!("Warning: Mutex poisoned during condvar wait, recovering");
+                    poisoned.into_inner()
+                }
+            };
         }
+
         guard
             .take()
-            .unwrap()
+            .ok_or_else(|| anyhow!("Map async signal was consumed without result"))?
             .map_err(|e| anyhow!("Failed to map fluid buffer: {e:?}"))?;
 
         let data = buffer_slice.get_mapped_range();

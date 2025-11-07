@@ -10,19 +10,36 @@ use cgmath::Point3;
 use noise::{NoiseFn, Perlin};
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 
+/// Maximum fluid level in a single block (12 = full block)
 pub const MAX_FLUID_LEVEL: u8 = 12;
+
+/// Minimum fluid level required to act as a source that can spread to neighbors
+/// Calculated as MAX_FLUID_LEVEL / 4, with a minimum of 1 to prevent zero division issues
+/// For MAX_FLUID_LEVEL = 12, this is 3
 pub const FLUID_MIN_SOURCE_LEVEL: u8 = if MAX_FLUID_LEVEL / 4 == 0 {
     1
 } else {
     MAX_FLUID_LEVEL / 4
 };
+
+/// Fluid level considered to be at the surface (where it stops flowing down)
+/// Calculated as the difference between MAX and MIN_SOURCE, clamped to MAX
+/// For MAX_FLUID_LEVEL = 12 and FLUID_MIN_SOURCE_LEVEL = 3, this is 9
 pub const FLUID_SURFACE_LEVEL: u8 = if MAX_FLUID_LEVEL > FLUID_MIN_SOURCE_LEVEL {
     MAX_FLUID_LEVEL - FLUID_MIN_SOURCE_LEVEL
 } else {
     MAX_FLUID_LEVEL
 };
+
+/// Minimum level difference required to trigger lateral flow between cells
 pub const FLUID_FLOW_THRESHOLD: i16 = 1;
+
+/// Minimum amount of fluid that can flow in a single step
 pub const FLUID_MIN_FLOW: u8 = 1;
+
+/// Maximum amount of fluid that can flow laterally in a single step
+/// Calculated as (MAX_FLUID_LEVEL + 2) / 3, with a minimum of 1
+/// For MAX_FLUID_LEVEL = 12, this is 4
 pub const FLUID_LATERAL_FLOW_CAP: u8 = if (MAX_FLUID_LEVEL + 2) / 3 == 0 {
     1
 } else {
@@ -815,17 +832,118 @@ impl World {
     }
 
     pub fn step_fluids(&mut self) -> bool {
-        // TODO: implement CPU fluid simulation fallback; current placeholder keeps fluids unchanged.
-        false
+        // CPU-based fluid simulation fallback
+        // This is a simple cellular automaton approach for water flow
+
+        let active_chunks: Vec<ChunkPos> = self.active_fluid_chunks.iter().copied().collect();
+        if active_chunks.is_empty() {
+            return false;
+        }
+
+        let mut any_changed = false;
+
+        // Process each active chunk
+        for chunk_pos in active_chunks {
+            let mut updates: Vec<(usize, usize, usize, u8)> = Vec::new();
+
+            if let Some(chunk) = self.chunks.get(&chunk_pos) {
+                // Collect all fluid positions and their amounts
+                let fluid_cells: Vec<(usize, usize, usize, u8)> =
+                    chunk.fluids_iter().collect();
+
+                for (x, y, z, amount) in fluid_cells {
+                    if amount == 0 {
+                        continue;
+                    }
+
+                    let world_x = chunk_pos.x * CHUNK_SIZE as i32 + x as i32;
+                    let world_y = y as i32;
+                    let world_z = chunk_pos.z * CHUNK_SIZE as i32 + z as i32;
+
+                    // Check if block below is air or has room for fluid
+                    if world_y > 0 {
+                        let below_block = self.get_block(world_x, world_y - 1, world_z);
+                        let below_fluid = self.get_fluid_amount(world_x, world_y - 1, world_z);
+
+                        if !below_block.is_solid() && below_fluid < MAX_FLUID_LEVEL {
+                            // Flow downward (gravity)
+                            let flow_amount = amount.min(MAX_FLUID_LEVEL - below_fluid).min(FLUID_MIN_FLOW * 3);
+                            if flow_amount > 0 {
+                                updates.push((x, y, z, amount.saturating_sub(flow_amount)));
+                                let new_below = (below_fluid as u16 + flow_amount as u16).min(MAX_FLUID_LEVEL as u16) as u8;
+                                self.set_fluid_amount(world_x, world_y - 1, world_z, new_below);
+                                any_changed = true;
+                                continue; // Prioritize downward flow
+                            }
+                        }
+                    }
+
+                    // If can't flow down and has enough fluid, try lateral flow
+                    if amount > FLUID_MIN_SOURCE_LEVEL {
+                        let neighbors = [
+                            (world_x + 1, world_y, world_z),
+                            (world_x - 1, world_y, world_z),
+                            (world_x, world_y, world_z + 1),
+                            (world_x, world_y, world_z - 1),
+                        ];
+
+                        let mut total_flow = 0u8;
+                        for &(nx, ny, nz) in &neighbors {
+                            let neighbor_block = self.get_block(nx, ny, nz);
+                            let neighbor_fluid = self.get_fluid_amount(nx, ny, nz);
+
+                            if !neighbor_block.is_solid() {
+                                let level_diff = amount.saturating_sub(neighbor_fluid);
+                                if level_diff > FLUID_FLOW_THRESHOLD as u8 {
+                                    let flow = (level_diff / 4).max(FLUID_MIN_FLOW).min(FLUID_LATERAL_FLOW_CAP);
+                                    let actual_flow = flow.min(amount.saturating_sub(total_flow));
+
+                                    if actual_flow > 0 {
+                                        total_flow = total_flow.saturating_add(actual_flow);
+                                        let new_neighbor = (neighbor_fluid as u16 + actual_flow as u16).min(MAX_FLUID_LEVEL as u16) as u8;
+                                        self.set_fluid_amount(nx, ny, nz, new_neighbor);
+                                        any_changed = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        if total_flow > 0 {
+                            updates.push((x, y, z, amount.saturating_sub(total_flow)));
+                        }
+                    }
+
+                    // Evaporate very small amounts
+                    if amount <= FLUID_MIN_FLOW && y > 0 {
+                        let below_block = self.get_block(world_x, world_y - 1, world_z);
+                        if !below_block.is_solid() || self.get_fluid_amount(world_x, world_y - 1, world_z) == 0 {
+                            updates.push((x, y, z, 0));
+                            any_changed = true;
+                        }
+                    }
+                }
+            }
+
+            // Apply updates to this chunk
+            if let Some(chunk) = self.chunks.get_mut(&chunk_pos) {
+                for (x, y, z, new_amount) in updates {
+                    chunk.set_fluid(x, y, z, new_amount);
+                }
+            }
+        }
+
+        any_changed
     }
 
     pub fn finalize_fluid_chunk_state(&mut self, pos: ChunkPos, changed: bool, has_fluid: bool) {
         if changed {
+            // Chunk has active fluid simulation - keep it in the active set and queue neighbors
             self.active_fluid_chunks.insert(pos);
             self.queue_loaded_neighbors(pos);
-        } else if !has_fluid {
-            self.active_fluid_chunks.remove(&pos);
         } else {
+            // Chunk is stable (no changes this tick) - remove from active simulation
+            // This includes both chunks with no fluid and chunks with static fluid
+            // Static fluid chunks will be re-added when a neighbor changes
             self.active_fluid_chunks.remove(&pos);
         }
     }
