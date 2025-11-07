@@ -138,6 +138,7 @@ struct InventoryLayout {
 const FIXED_TICK_RATE: f32 = 60.0;
 const FIXED_TICK_STEP: f32 = 1.0 / FIXED_TICK_RATE;
 const MAX_TICKS_PER_FRAME: usize = 6;
+const WATER_UPDATE_INTERVAL: u32 = 10; // Water updates every 10 ticks (6 times per second)
 
 fn ui_width(value: f32) -> f32 {
     value / UI_REFERENCE_ASPECT
@@ -270,6 +271,7 @@ struct State<'window> {
     tick_accumulator: f32,
     animation_time: f32,
     debug_tick_counter: u32,
+    water_tick_counter: u32,
     mouse_grabbed: bool,
     world_dirty: bool,
     dirty_chunks: HashSet<ChunkPos>,
@@ -638,6 +640,7 @@ impl<'window> State<'window> {
             tick_accumulator: 0.0,
             animation_time: 0.0,
             debug_tick_counter: 0,
+            water_tick_counter: 0,
             mouse_grabbed: false,
             world_dirty: true,
             dirty_chunks: HashSet::new(),
@@ -3177,6 +3180,9 @@ impl<'window> State<'window> {
 
         self.world.advance_time(tick_dt);
 
+        // Increment tick counters
+        self.water_tick_counter = self.water_tick_counter.wrapping_add(1);
+
         if self.debug_mode {
             self.debug_tick_counter = self.debug_tick_counter.wrapping_add(1);
             if self.debug_tick_counter % FIXED_TICK_RATE as u32 == 0 {
@@ -3206,26 +3212,29 @@ impl<'window> State<'window> {
             self.dirty_chunks.clear();
         }
 
-        if profiler::scope(&frame_profiler, "fluid_poll", || {
-            self.fluid_system.poll_results(&mut self.world)
-        }) {
-            self.world_dirty = true;
-            self.force_full_remesh = true;
-            self.dirty_chunks.clear();
-        }
+        // Water simulation runs every 10 ticks (6 times per second) to reduce lag
+        if self.water_tick_counter % WATER_UPDATE_INTERVAL == 0 {
+            if profiler::scope(&frame_profiler, "fluid_poll", || {
+                self.fluid_system.poll_results(&mut self.world)
+            }) {
+                self.world_dirty = true;
+                self.force_full_remesh = true;
+                self.dirty_chunks.clear();
+            }
 
-        if !in_menu {
-            profiler::scope(&frame_profiler, "fluid_pump", || {
-                self.fluid_system.pump(&self.world);
-            });
-        }
+            if !in_menu {
+                profiler::scope(&frame_profiler, "fluid_pump", || {
+                    self.fluid_system.pump(&self.world);
+                });
+            }
 
-        if profiler::scope(&frame_profiler, "fluid_fallback", || {
-            self.fluid_system.fallback_step(&mut self.world)
-        }) {
-            self.world_dirty = true;
-            self.force_full_remesh = true;
-            self.dirty_chunks.clear();
+            if profiler::scope(&frame_profiler, "fluid_fallback", || {
+                self.fluid_system.fallback_step(&mut self.world)
+            }) {
+                self.world_dirty = true;
+                self.force_full_remesh = true;
+                self.dirty_chunks.clear();
+            }
         }
 
         profiler::scope(&frame_profiler, "electric_tick", || {
