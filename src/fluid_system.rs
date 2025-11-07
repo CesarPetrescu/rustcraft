@@ -67,14 +67,22 @@ impl FluidSystem {
                         WorkerCommand::Shutdown => break,
                     }
                 }
-            })
-            .expect("Failed to spawn fluid worker thread");
+            });
+
+        let worker_handle = match handle {
+            Ok(h) => Some(h),
+            Err(e) => {
+                eprintln!("Warning: Failed to spawn fluid worker thread: {e}");
+                eprintln!("Fluid simulation will fall back to CPU processing");
+                None
+            }
+        };
 
         Self {
             sender: Some(command_tx),
             result_receiver: result_rx,
             pending_tiles: HashSet::new(),
-            worker_handle: Some(handle),
+            worker_handle,  // Already an Option, don't wrap again
             gpu_times: VecDeque::new(),
             gpu_overloaded_until: Instant::now(),
             npu_available: npu::is_available(),

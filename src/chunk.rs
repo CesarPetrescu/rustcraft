@@ -114,7 +114,8 @@ impl Chunk {
         }
         self.fluids.copy_from_slice(new_fluids);
         for idx in 0..CHUNK_VOLUME {
-            if self.fluids[idx] > 0 {
+            // Only clear block if fluid was added and block is not already air
+            if self.fluids[idx] > 0 && self.blocks[idx].block_type != BlockType::Air {
                 self.blocks[idx] = Block::new(BlockType::Air);
             }
             self.update_cell_state(idx);
