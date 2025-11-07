@@ -133,11 +133,9 @@ impl ElectricalComponent {
                 connectors
             }
             Self::Ground => {
-                // Ground connects from its mount face to any adjacent components
+                // Ground connects from all sides to any adjacent components
                 // It acts as a ground reference point for the circuit
-                let mut connectors = [false; 6];
-                connectors[face_index(face)] = true;
-                connectors
+                [true; 6]
             }
         }
     }
