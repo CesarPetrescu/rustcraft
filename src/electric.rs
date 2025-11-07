@@ -126,10 +126,9 @@ impl ElectricalComponent {
             }
             Self::VoltageSource => axis_pair_connectors(axis),
             Self::Ground => {
-                let mut connectors = [false; 6];
-                connectors[face_index(face)] = true;
-                connectors[face_index(face.opposite())] = true;
-                connectors
+                // Ground only connects from its mount face (where it's attached to the circuit)
+                // Not bidirectional - provides ground reference point only
+                [false; 6]
             }
         };
 
@@ -155,7 +154,8 @@ impl ElectricalComponent {
 
     pub fn terminal_faces(self, axis: Axis, mount_face: BlockFace) -> (BlockFace, BlockFace) {
         match self {
-            ElectricalComponent::Ground => (mount_face, mount_face.opposite()),
+            // Ground has only one terminal (mount face) - the same face serves as both terminals
+            ElectricalComponent::Ground => (mount_face, mount_face),
             ElectricalComponent::Wire
             | ElectricalComponent::Resistor
             | ElectricalComponent::VoltageSource => (axis.positive_face(), axis.negative_face()),
@@ -506,6 +506,7 @@ impl ElectricalSystem {
             return existing.axis;
         }
 
+        // First check for intra-block connections (same block, different faces)
         if let Some(entry) = self.nodes.get(&world_pos) {
             for &candidate in preferred_axes(component).iter() {
                 if candidate == face.axis() {
@@ -533,20 +534,75 @@ impl ElectricalSystem {
             }
         }
 
+        // Check all external neighbors and count potential connections for each axis
+        let mut axis_scores: [(Axis, usize); 3] = [
+            (Axis::X, 0),
+            (Axis::Y, 0),
+            (Axis::Z, 0),
+        ];
+
         for (idx, dir) in NEIGHBOR_DIRS.iter().enumerate() {
             let neighbor_pos = world_pos.offset(*dir);
             let opposite = opposite_index(idx);
+
             if let Some(neighbors) = self.nodes.get(&neighbor_pos) {
-                if neighbors
+                // Check if any neighbor at this position can connect
+                let has_compatible_neighbor = neighbors
                     .iter()
-                    .any(|(_, node)| node.connectors()[opposite])
-                {
-                    return Axis::from_connector_index(idx);
+                    .any(|(_, node)| node.connectors()[opposite]);
+
+                if has_compatible_neighbor {
+                    // Determine which axis this direction belongs to
+                    let axis_for_dir = Axis::from_connector_index(idx);
+
+                    // Increment score for this axis
+                    for (axis, score) in axis_scores.iter_mut() {
+                        if *axis == axis_for_dir {
+                            *score += 1;
+                            break;
+                        }
+                    }
                 }
             }
         }
 
-        component.default_axis()
+        // Filter out the face's axis and sort by score (highest first), then by preference
+        let face_axis = face.axis();
+        let preferred = preferred_axes(component);
+
+        axis_scores.sort_by(|a, b| {
+            // First, exclude face axis
+            if a.0 == face_axis && b.0 != face_axis {
+                return std::cmp::Ordering::Greater;
+            }
+            if b.0 == face_axis && a.0 != face_axis {
+                return std::cmp::Ordering::Less;
+            }
+
+            // Then sort by score (descending)
+            match b.1.cmp(&a.1) {
+                std::cmp::Ordering::Equal => {
+                    // If scores are equal, use preference order
+                    let a_pref = preferred.iter().position(|&x| x == a.0).unwrap_or(999);
+                    let b_pref = preferred.iter().position(|&x| x == b.0).unwrap_or(999);
+                    a_pref.cmp(&b_pref)
+                }
+                other => other,
+            }
+        });
+
+        // Return the best axis if it has at least one connection, otherwise use default
+        if axis_scores[0].0 != face_axis && axis_scores[0].1 > 0 {
+            axis_scores[0].0
+        } else {
+            // No neighbors found, use default axis (but not the face axis)
+            for &candidate in preferred.iter() {
+                if candidate != face_axis {
+                    return candidate;
+                }
+            }
+            component.default_axis()
+        }
     }
 
     fn rebuild_networks(&mut self) {
@@ -668,41 +724,54 @@ impl ElectricalSystem {
 
         for network in &self.networks {
             let has_loop = network.has_source && network.has_ground;
-            let source_voltage = network
+
+            // Count voltage sources for validation
+            let voltage_sources: Vec<_> = network
                 .elements
                 .iter()
-                .find_map(|el| {
-                    if el.component == ElectricalComponent::VoltageSource {
-                        el.params.voltage_volts
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or(0.0);
+                .filter(|el| el.component == ElectricalComponent::VoltageSource)
+                .collect();
+
+            // Get source voltage (if multiple sources, sum them - series connection)
+            let source_voltage = voltage_sources
+                .iter()
+                .filter_map(|el| el.params.voltage_volts)
+                .sum::<f32>();
+
+            // Calculate total resistance
             let total_resistance = network
                 .elements
                 .iter()
                 .filter_map(|el| el.params.resistance_ohms)
                 .sum::<f32>();
+
+            // Ensure minimum resistance to avoid division by zero or unrealistic currents
             let effective_resistance = total_resistance.max(0.05);
+
+            // Calculate current - only flows if we have a complete loop (source AND ground)
             let current = if has_loop {
                 source_voltage / effective_resistance
             } else {
                 0.0
             };
 
+            // Update telemetry for each element in the network
             for element in &network.elements {
                 let key = AttachmentKey {
                     pos: element.position,
                     face: element.face,
                 };
+
                 let voltage = if element.component == ElectricalComponent::VoltageSource {
+                    // Voltage source shows its source voltage
                     source_voltage
                 } else if let Some(resistance) = element.params.resistance_ohms {
+                    // Other components show voltage drop across them (V = I * R)
                     current * resistance
                 } else {
                     0.0
                 };
+
                 telemetry_updates.push((key, ComponentTelemetry { current, voltage }));
             }
         }
