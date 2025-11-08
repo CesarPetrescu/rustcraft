@@ -174,7 +174,7 @@ impl CameraController {
                         KeyCode::KeyA => self.is_left_pressed = is_pressed,
                         KeyCode::KeyD => self.is_right_pressed = is_pressed,
                         KeyCode::Space => self.is_jump_pressed = is_pressed,
-                        KeyCode::ShiftLeft | KeyCode::ShiftRight => {
+                        KeyCode::ControlLeft | KeyCode::ControlRight => {
                             self.is_sprint_pressed = is_pressed
                         }
                         _ => return false,

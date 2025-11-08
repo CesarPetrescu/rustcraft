@@ -48,7 +48,7 @@ cargo run
 | Move forward/back | `W` / `S` |
 | Strafe left/right | `A` / `D` |
 | Jump / Ascend (noclip) | `Space` |
-| Sprint | `Left Shift` |
+| Sprint | `Left Ctrl` |
 | Toggle noclip fly mode | `F` |
 | Toggle debug overlay | `F3` |
 | Open/Close inventory | `E` |

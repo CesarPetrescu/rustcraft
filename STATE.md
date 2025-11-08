@@ -53,7 +53,7 @@
 - **Ideas**: Temperature map, erosion, electricity/logic blocks.
 
 ## Polish & UX
-- **Done**: Basic HUD (selected block printouts), mouse grab toggle, smoother movement with sprint (Left Shift) and dynamic FOV response, crosshair overlay, pause menu with input locking, simple inventory panel overlay.
+- **Done**: Basic HUD (selected block printouts), mouse grab toggle, smoother movement with sprint (Left Ctrl) and dynamic FOV response, crosshair overlay, pause menu with input locking, simple inventory panel overlay.
 - **Missing**:
   - Pause/settings menu, crafting UI, minimap/compass, tutorials, audio, particles.
 - **Plan**:

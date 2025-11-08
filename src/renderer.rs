@@ -3,8 +3,8 @@ use std::mem;
 use std::sync::Arc;
 
 use anyhow::Context;
-use cgmath::SquareMatrix;
-use cgmath::{Matrix4, Quaternion, Rad, Rotation, Rotation3, Vector3};
+use cgmath::{InnerSpace, Matrix, SquareMatrix};
+use cgmath::{Matrix4, Quaternion, Rad, Rotation, Rotation3, Vector3, Vector4};
 use wgpu::util::DeviceExt;
 use winit::dpi::PhysicalSize;
 use winit::window::Window;
@@ -12,6 +12,7 @@ use winit::window::Window;
 use crate::block::BlockType;
 use crate::camera::{Camera, Projection};
 use crate::electric::{ComponentTelemetry, ElectricalComponent};
+use crate::chunk::{CHUNK_HEIGHT, CHUNK_SIZE};
 use crate::mesh::{self, MeshData, Vertex as BlockVertex};
 use crate::texture::TextureAtlas;
 use crate::world::{AtmosphereSample, ChunkPos, World};
@@ -21,8 +22,6 @@ const SKY_SHADER_SOURCE: &str = include_str!("sky.wgsl");
 const HIGHLIGHT_SHADER_SOURCE: &str = include_str!("highlight.wgsl");
 const UI_SHADER_SOURCE: &str = include_str!("ui_shader.wgsl");
 
-const INITIAL_VERTEX_CAPACITY: usize = 4096;
-const INITIAL_INDEX_CAPACITY: usize = 8192;
 const INITIAL_HIGHLIGHT_CAPACITY: usize = 128;
 const INITIAL_POWER_CAPACITY: usize = 512;
 const INITIAL_HAND_VERTEX_CAPACITY: usize = 128;
@@ -164,6 +163,73 @@ pub struct UiVertex {
     pub mode: f32,
 }
 
+struct ChunkGpuMesh {
+    vertex_buffer: wgpu::Buffer,
+    index_buffer: wgpu::Buffer,
+    index_count: u32,
+    bounds_min: [f32; 3],
+    bounds_max: [f32; 3],
+}
+
+#[derive(Clone, Copy)]
+struct Plane {
+    normal: Vector3<f32>,
+    d: f32,
+}
+
+impl Plane {
+    fn from_vec4(v: Vector4<f32>) -> Self {
+        let normal = Vector3::new(v.x, v.y, v.z);
+        let length = normal.magnitude();
+        if length > 0.0 {
+            let inv = 1.0 / length;
+            Self {
+                normal: normal * inv,
+                d: v.w * inv,
+            }
+        } else {
+            Self { normal, d: v.w }
+        }
+    }
+
+    fn distance_to_point(&self, point: [f32; 3]) -> f32 {
+        self.normal.x * point[0] + self.normal.y * point[1] + self.normal.z * point[2] + self.d
+    }
+}
+
+struct Frustum {
+    planes: [Plane; 6],
+}
+
+impl Frustum {
+    fn from_matrix(matrix: Matrix4<f32>) -> Self {
+        let m = matrix.transpose();
+        let rows = [m.x, m.y, m.z, m.w];
+        let planes = [
+            Plane::from_vec4(rows[3] + rows[0]), // Left
+            Plane::from_vec4(rows[3] - rows[0]), // Right
+            Plane::from_vec4(rows[3] + rows[1]), // Bottom
+            Plane::from_vec4(rows[3] - rows[1]), // Top
+            Plane::from_vec4(rows[3] + rows[2]), // Near
+            Plane::from_vec4(rows[3] - rows[2]), // Far
+        ];
+        Self { planes }
+    }
+
+    fn intersects_aabb(&self, min: [f32; 3], max: [f32; 3]) -> bool {
+        for plane in &self.planes {
+            let mut positive = [0.0; 3];
+            positive[0] = if plane.normal.x >= 0.0 { max[0] } else { min[0] };
+            positive[1] = if plane.normal.y >= 0.0 { max[1] } else { min[1] };
+            positive[2] = if plane.normal.z >= 0.0 { max[2] } else { min[2] };
+            if plane.distance_to_point(positive) < 0.0 {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 pub struct Renderer<'window> {
     size: PhysicalSize<u32>,
     surface: wgpu::Surface<'window>,
@@ -182,14 +248,8 @@ pub struct Renderer<'window> {
     sky_pipeline: wgpu::RenderPipeline,
     highlight_pipeline: wgpu::RenderPipeline,
     ui_pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    index_buffer: wgpu::Buffer,
-    vertex_capacity: usize,
-    index_capacity: usize,
-    num_indices: u32,
-    chunk_meshes: HashMap<ChunkPos, MeshData>,
-    combined_vertices: Vec<BlockVertex>,
-    combined_indices: Vec<u32>,
+    chunk_meshes: HashMap<ChunkPos, ChunkGpuMesh>,
+    last_view_proj: Matrix4<f32>,
     highlight_vertex_buffer: wgpu::Buffer,
     highlight_vertex_capacity: usize,
     highlight_vertex_count: u32,
@@ -541,19 +601,6 @@ impl<'window> Renderer<'window> {
             multiview: None,
         });
 
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("world_vertex_buffer"),
-            size: (INITIAL_VERTEX_CAPACITY.max(1) * mem::size_of::<BlockVertex>()) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("world_index_buffer"),
-            size: (INITIAL_INDEX_CAPACITY.max(1) * mem::size_of::<u32>()) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let highlight_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("highlight_vertex_buffer"),
             size: (INITIAL_HIGHLIGHT_CAPACITY.max(1) * mem::size_of::<HighlightVertex>()) as u64,
@@ -613,14 +660,8 @@ impl<'window> Renderer<'window> {
             sky_pipeline,
             highlight_pipeline,
             ui_pipeline,
-            vertex_buffer,
-            index_buffer,
-            vertex_capacity: INITIAL_VERTEX_CAPACITY.max(1),
-            index_capacity: INITIAL_INDEX_CAPACITY.max(1),
-            num_indices: 0,
             chunk_meshes: HashMap::new(),
-            combined_vertices: Vec::new(),
-            combined_indices: Vec::new(),
+            last_view_proj: Matrix4::identity(),
             highlight_vertex_buffer,
             highlight_vertex_capacity: INITIAL_HIGHLIGHT_CAPACITY.max(1),
             highlight_vertex_count: 0,
@@ -676,6 +717,7 @@ impl<'window> Renderer<'window> {
         let uniform = CameraUniform::from_matrix(matrix);
         self.queue
             .write_buffer(&self.camera_buffer, 0, bytemuck::bytes_of(&uniform));
+        self.last_view_proj = matrix;
     }
 
     pub fn update_environment(&mut self, atmosphere: &AtmosphereSample, camera_position: [f32; 3]) {
@@ -692,9 +734,8 @@ impl<'window> Renderer<'window> {
         self.chunk_meshes.clear();
         for (&pos, chunk) in world.chunks() {
             let mesh = mesh::generate_chunk_mesh(world, pos, chunk);
-            self.chunk_meshes.insert(pos, mesh);
+            self.upload_chunk_mesh(pos, mesh);
         }
-        self.rebuild_combined_mesh();
     }
 
     pub fn update_chunks(&mut self, world: &World, dirty_chunks: &HashSet<ChunkPos>) {
@@ -702,55 +743,72 @@ impl<'window> Renderer<'window> {
             return;
         }
 
-        let mut changed = false;
         for pos in dirty_chunks {
             if let Some(chunk) = world.chunks().get(pos) {
                 let mesh = mesh::generate_chunk_mesh(world, *pos, chunk);
-                self.chunk_meshes.insert(*pos, mesh);
-                changed = true;
-            } else if self.chunk_meshes.remove(pos).is_some() {
-                changed = true;
+                self.upload_chunk_mesh(*pos, mesh);
+            } else {
+                self.chunk_meshes.remove(pos);
             }
-        }
-
-        if changed {
-            self.rebuild_combined_mesh();
         }
     }
 
-    fn rebuild_combined_mesh(&mut self) {
-        self.combined_vertices.clear();
-        self.combined_indices.clear();
+    fn upload_chunk_mesh(&mut self, pos: ChunkPos, mesh: MeshData) {
+        if mesh.vertices.is_empty() || mesh.indices.is_empty() {
+            self.chunk_meshes.remove(&pos);
+            return;
+        }
 
-        let mut positions: Vec<_> = self.chunk_meshes.keys().copied().collect();
-        positions.sort_by_key(|pos| (pos.x, pos.z));
+        let vertex_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("chunk_vertex_buffer"),
+                contents: bytemuck::cast_slice(&mesh.vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+        let index_buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("chunk_index_buffer"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            });
 
-        for pos in positions {
-            if let Some(mesh) = self.chunk_meshes.get(&pos) {
-                let base = self.combined_vertices.len() as u32;
-                self.combined_vertices.extend_from_slice(&mesh.vertices);
-                self.combined_indices
-                    .extend(mesh.indices.iter().map(|idx| idx + base));
+        let base_x = (pos.x * CHUNK_SIZE as i32) as f32;
+        let base_z = (pos.z * CHUNK_SIZE as i32) as f32;
+        let bounds_min = [base_x - 0.5, -0.5, base_z - 0.5];
+        let bounds_max = [
+            base_x + CHUNK_SIZE as f32 - 0.5,
+            CHUNK_HEIGHT as f32 - 0.5,
+            base_z + CHUNK_SIZE as f32 - 0.5,
+        ];
+
+        let gpu_mesh = ChunkGpuMesh {
+            vertex_buffer,
+            index_buffer,
+            index_count: mesh.indices.len() as u32,
+            bounds_min,
+            bounds_max,
+        };
+        self.chunk_meshes.insert(pos, gpu_mesh);
+    }
+
+    fn draw_world_chunks<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        frustum: &Frustum,
+    ) {
+        for mesh in self.chunk_meshes.values() {
+            if mesh.index_count == 0 {
+                continue;
             }
+            if !frustum.intersects_aabb(mesh.bounds_min, mesh.bounds_max) {
+                continue;
+            }
+            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
         }
-
-        self.ensure_main_buffers(self.combined_vertices.len(), self.combined_indices.len());
-
-        if !self.combined_vertices.is_empty() {
-            self.queue.write_buffer(
-                &self.vertex_buffer,
-                0,
-                bytemuck::cast_slice(&self.combined_vertices),
-            );
-        }
-        if !self.combined_indices.is_empty() {
-            self.queue.write_buffer(
-                &self.index_buffer,
-                0,
-                bytemuck::cast_slice(&self.combined_indices),
-            );
-        }
-        self.num_indices = self.combined_indices.len() as u32;
     }
 
     pub fn update_highlight(&mut self, bounds: Option<([f32; 3], [f32; 3])>) {
@@ -962,6 +1020,8 @@ impl<'window> Renderer<'window> {
             a: self.clear_color[3] as f64,
         };
 
+        let frustum = Frustum::from_matrix(self.last_view_proj);
+
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world_pass"),
@@ -993,11 +1053,7 @@ impl<'window> Renderer<'window> {
             pass.set_bind_group(0, &self.camera_bind_group, &[]);
             pass.set_bind_group(1, &self.texture_atlas.bind_group, &[]);
             pass.set_bind_group(2, &self.environment_bind_group, &[]);
-            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            if self.num_indices > 0 {
-                pass.draw_indexed(0..self.num_indices, 0, 0..1);
-            }
+            self.draw_world_chunks(&mut pass, &frustum);
 
             if self.highlight_vertex_count > 0 || self.power_vertex_count > 0 {
                 pass.set_pipeline(&self.highlight_pipeline);
@@ -1049,37 +1105,6 @@ impl<'window> Renderer<'window> {
         self.queue.submit(Some(encoder.finish()));
         output.present();
         Ok(())
-    }
-
-    fn ensure_main_buffers(&mut self, vertices: usize, indices: usize) {
-        self.ensure_world_vertex_capacity(vertices);
-        self.ensure_world_index_capacity(indices);
-    }
-
-    fn ensure_world_vertex_capacity(&mut self, required: usize) {
-        let required = required.max(1);
-        if required > self.vertex_capacity {
-            self.vertex_capacity = required.next_power_of_two();
-            self.vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("world_vertex_buffer"),
-                size: (self.vertex_capacity * mem::size_of::<BlockVertex>()) as u64,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        }
-    }
-
-    fn ensure_world_index_capacity(&mut self, required: usize) {
-        let required = required.max(1);
-        if required > self.index_capacity {
-            self.index_capacity = required.next_power_of_two();
-            self.index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("world_index_buffer"),
-                size: (self.index_capacity * mem::size_of::<u32>()) as u64,
-                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-        }
     }
 
     fn ensure_highlight_capacity(&mut self, required: usize) {

@@ -13,6 +13,7 @@ mod renderer;
 mod texture;
 mod world;
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::time::Instant;
 
@@ -144,6 +145,13 @@ fn ui_width(value: f32) -> f32 {
     value / UI_REFERENCE_ASPECT
 }
 
+fn point_in_rect(point: (f32, f32), rect: Rect) -> bool {
+    point.0 >= (rect.0).0
+        && point.0 <= (rect.1).0
+        && point.1 >= (rect.0).1
+        && point.1 <= (rect.1).1
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct AttachmentTarget {
     pos: BlockPos3,
@@ -194,6 +202,12 @@ enum SettingsTab {
     Display,
     Audio,
     Controls,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SettingsSlider {
+    Fov,
+    Sensitivity,
 }
 
 impl SettingsTab {
@@ -288,6 +302,10 @@ struct State<'window> {
     settings_fov_deg: f32,
     settings_sensitivity: f32,
     settings_volume: f32,
+    settings_cursor_pos: Option<(f32, f32)>,
+    settings_active_slider: Option<SettingsSlider>,
+    settings_fov_slider: Cell<Option<Rect>>,
+    settings_sensitivity_slider: Cell<Option<Rect>>,
 }
 
 impl<'window> State<'window> {
@@ -344,6 +362,10 @@ impl<'window> State<'window> {
         }
         self.paused = false;
         self.settings_open = false;
+        self.settings_active_slider = None;
+        self.settings_cursor_pos = None;
+        self.settings_fov_slider.set(None);
+        self.settings_sensitivity_slider.set(None);
         self.exit_menu_mode_if_needed();
         self.mark_ui_dirty();
         println!("Resumed.");
@@ -411,6 +433,10 @@ impl<'window> State<'window> {
         self.settings_focus_index = 0;
         self.settings_fov_deg = self.settings_fov_deg.clamp(60.0, 100.0);
         self.settings_sensitivity = self.controller.sensitivity();
+        self.settings_active_slider = None;
+        self.settings_cursor_pos = None;
+        self.settings_fov_slider.set(None);
+        self.settings_sensitivity_slider.set(None);
         self.mark_ui_dirty();
     }
 
@@ -419,6 +445,10 @@ impl<'window> State<'window> {
             return;
         }
         self.settings_open = false;
+        self.settings_active_slider = None;
+        self.settings_cursor_pos = None;
+        self.settings_fov_slider.set(None);
+        self.settings_sensitivity_slider.set(None);
         self.mark_ui_dirty();
     }
 
@@ -452,10 +482,105 @@ impl<'window> State<'window> {
         }
     }
 
+    fn handle_settings_pointer(&mut self, event: &WindowEvent) -> bool {
+        if !self.settings_open {
+            return false;
+        }
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                if let Some(point) = self.ui_point_from_window_position(*position) {
+                    self.settings_cursor_pos = Some(point);
+                    if let Some(slider) = self.settings_active_slider {
+                        self.update_slider_from_point(slider, point.0);
+                    }
+                }
+                true
+            }
+            WindowEvent::MouseInput { state, button, .. } if *button == MouseButton::Left => {
+                if *state == ElementState::Pressed {
+                    if let Some(point) = self.settings_cursor_pos {
+                        if self.try_begin_slider_drag(SettingsSlider::Fov, point) {
+                            return true;
+                        }
+                        if self.try_begin_slider_drag(SettingsSlider::Sensitivity, point) {
+                            return true;
+                        }
+                    }
+                    false
+                } else {
+                    self.settings_active_slider = None;
+                    true
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn ui_point_from_window_position(
+        &self,
+        position: winit::dpi::PhysicalPosition<f64>,
+    ) -> Option<(f32, f32)> {
+        let size = self.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return None;
+        }
+        let norm_x = (position.x as f32 / size.width as f32).clamp(0.0, 1.0);
+        let norm_y = (position.y as f32 / size.height as f32).clamp(0.0, 1.0);
+        Some(self.ui_scaler.unproject((norm_x, norm_y)))
+    }
+
+    fn try_begin_slider_drag(&mut self, slider: SettingsSlider, point: (f32, f32)) -> bool {
+        if let Some(rect) = self.slider_rect(slider) {
+            if point_in_rect(point, rect) {
+                self.settings_active_slider = Some(slider);
+                match slider {
+                    SettingsSlider::Fov => self.settings_focus_index = 0,
+                    SettingsSlider::Sensitivity => self.settings_focus_index = 1,
+                }
+                self.update_slider_from_point(slider, point.0);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn slider_rect(&self, slider: SettingsSlider) -> Option<Rect> {
+        match slider {
+            SettingsSlider::Fov => self.settings_fov_slider.get(),
+            SettingsSlider::Sensitivity => self.settings_sensitivity_slider.get(),
+        }
+    }
+
+    fn update_slider_from_point(&mut self, slider: SettingsSlider, cursor_x: f32) {
+        let rect = match slider {
+            SettingsSlider::Fov => self.settings_fov_slider.get(),
+            SettingsSlider::Sensitivity => self.settings_sensitivity_slider.get(),
+        };
+        let Some(rect) = rect else {
+            return;
+        };
+        let width = (rect.1 .0 - rect.0 .0).max(f32::EPSILON);
+        let ratio = ((cursor_x - rect.0 .0) / width).clamp(0.0, 1.0);
+        match slider {
+            SettingsSlider::Fov => {
+                self.settings_fov_deg = 60.0 + ratio * 40.0;
+            }
+            SettingsSlider::Sensitivity => {
+                let min = 0.0005;
+                let max = 0.02;
+                self.settings_sensitivity = min + ratio * (max - min);
+            }
+        }
+        self.apply_display_settings();
+    }
+
     fn cycle_settings_tab(&mut self, delta: i32) {
         let current = self.settings_selected_tab.index() as i32;
         let next = (current + delta).rem_euclid(SettingsTab::ALL.len() as i32) as usize;
         self.settings_selected_tab = SettingsTab::ALL[next];
+        self.settings_active_slider = None;
+        self.settings_fov_slider.set(None);
+        self.settings_sensitivity_slider.set(None);
         let count = self.settings_focus_count();
         if count == 0 {
             self.settings_focus_index = 0;
@@ -657,6 +782,10 @@ impl<'window> State<'window> {
             settings_fov_deg,
             settings_sensitivity,
             settings_volume,
+            settings_cursor_pos: None,
+            settings_active_slider: None,
+            settings_fov_slider: Cell::new(None),
+            settings_sensitivity_slider: Cell::new(None),
         };
 
         state.refresh_palette_filter();
@@ -743,6 +872,10 @@ impl<'window> State<'window> {
                     }
                 }
             }
+        }
+
+        if self.settings_open && self.handle_settings_pointer(event) {
+            return true;
         }
 
         if self.inventory_open && self.handle_inventory_input(event) {
@@ -1511,7 +1644,7 @@ impl<'window> State<'window> {
 
                 match (state, button) {
                     (ElementState::Pressed, MouseButton::Left) => {
-                        let shift = self.modifiers.state().shift_key();
+                        let ctrl = self.modifiers.state().control_key();
                         if let Some(point) = cursor {
                             if point_in_rect(point, layout.search_clear_rect)
                                 && !self.inventory_search_query.is_empty()
@@ -1556,7 +1689,7 @@ impl<'window> State<'window> {
                             }
                         }
 
-                        if shift {
+                        if ctrl {
                             if let Some(index) = self.inventory_palette_hover {
                                 if let Some(block) =
                                     self.inventory_palette_filtered.get(index).copied()
@@ -2012,16 +2145,21 @@ impl<'window> State<'window> {
                 status.chip_fill,
                 None,
             );
-            ui.add_text(
-                (chip_min.0 + ui_width(0.014), chip_min.1 + 0.016),
+            let text_margin = ui_width(0.014);
+            let text_width = (chip_width - text_margin * 2.0).max(0.02);
+            let mut status_y = ui.add_wrapped_text(
+                (chip_min.0 + text_margin, chip_min.1 + 0.016),
                 0.014,
+                text_width,
                 status.chip_text,
                 status.label,
             );
             if let Some(detail) = status.detail {
-                ui.add_text(
-                    (chip_min.0 + ui_width(0.014), chip_min.1 + 0.034),
+                status_y += 0.002;
+                ui.add_wrapped_text(
+                    (chip_min.0 + text_margin, status_y),
                     0.011,
+                    text_width,
                     [0.78, 0.82, 0.96, 1.0],
                     detail,
                 );
@@ -2117,6 +2255,8 @@ impl<'window> State<'window> {
         );
     }
     fn draw_settings_overlay(&self, ui: &mut UiGeometry) {
+        self.settings_fov_slider.set(None);
+        self.settings_sensitivity_slider.set(None);
         ui.add_rect_fullscreen((0.0, 0.0), (1.0, 1.0), [0.01, 0.02, 0.05, 0.72]);
 
         let panel_min = (ui_width(0.18), 0.16);
@@ -2247,6 +2387,13 @@ impl<'window> State<'window> {
                             [0.72, 0.78, 0.94, 1.0]
                         },
                     );
+                    match focus_index {
+                        0 => self.settings_fov_slider.set(Some((track_min, track_max))),
+                        1 => self
+                            .settings_sensitivity_slider
+                            .set(Some((track_min, track_max))),
+                        _ => {}
+                    }
                     cursor_y += slider_height + 0.04;
                 }
             }
@@ -2292,11 +2439,12 @@ impl<'window> State<'window> {
                     },
                 );
                 cursor_y += slider_height + 0.04;
-                ui.add_text(
+                ui.add_wrapped_text(
                     (content_min.0, cursor_y),
                     0.012,
+                    (content_max.0 - content_min.0).max(0.05),
                     [0.74, 0.79, 0.94, 1.0],
-                    "Volume slider is placeholder until audio mix is implemented.",
+                    "Volume slider is placeholder until the full audio mix is implemented.",
                 );
             }
             SettingsTab::Controls => {
@@ -2307,20 +2455,24 @@ impl<'window> State<'window> {
                     "Control remapping is coming soon.",
                 );
                 cursor_y += 0.028;
-                ui.add_text(
+                ui.add_wrapped_text(
                     (content_min.0, cursor_y),
                     0.012,
+                    (content_max.0 - content_min.0).max(0.05),
                     [0.74, 0.79, 0.94, 1.0],
                     "Use T on highlighted components to tweak electrical settings.",
                 );
             }
         }
 
-        ui.add_text(
+        let instructions_width =
+            (panel_max.0 - panel_min.0 - ui_width(0.08)).max(0.05);
+        ui.add_wrapped_text(
             (panel_min.0 + ui_width(0.04), panel_max.1 - 0.075),
             0.012,
+            instructions_width,
             [0.72, 0.78, 0.92, 1.0],
-            "TAB: cycle categories | arrows: adjust | ESC: close",
+            "TAB: cycle categories   Arrow keys: adjust   ESC: close",
         );
     }
     fn draw_inventory_overlay(&self, ui: &mut UiGeometry) {
@@ -2627,23 +2779,24 @@ impl<'window> State<'window> {
             [0.11, 0.12, 0.18, 0.92],
             Some([0.24, 0.38, 0.62, 0.32]),
         );
-        ui.add_text(
-            (
-                instructions_panel_min.0 + ui_width(0.018),
-                instructions_panel_min.1 + 0.018,
-            ),
+        let instructions_pad = ui_width(0.018);
+        let instructions_width =
+            (instructions_panel_max.0 - instructions_panel_min.0 - instructions_pad * 2.0).max(0.05);
+        let mut instructions_y = instructions_panel_min.1 + 0.018;
+        instructions_y = ui.add_wrapped_text(
+            (instructions_panel_min.0 + instructions_pad, instructions_y),
             0.012,
+            instructions_width,
             [0.9, 0.93, 1.0, 1.0],
-            "Left click: drag/place  |  Right click: clear slot  |  Shift+Click: quick assign",
+            "Left click: drag/place   Right click: clear slot   Ctrl+Click: quick assign",
         );
-        ui.add_text(
-            (
-                instructions_panel_min.0 + ui_width(0.018),
-                instructions_panel_min.1 + 0.042,
-            ),
+        instructions_y += 0.004;
+        ui.add_wrapped_text(
+            (instructions_panel_min.0 + instructions_pad, instructions_y),
             0.012,
+            instructions_width,
             [0.75, 0.8, 0.94, 1.0],
-            "Scroll over palette to browse, type to search, Enter/Esc to exit search.",
+            "Scroll over the palette to browse, type to search, and press Enter/Esc to exit search.",
         );
 
         if let (Some(block), Some(cursor)) = (self.inventory_drag_block, self.inventory_cursor_pos)
@@ -2802,14 +2955,16 @@ impl<'window> State<'window> {
 
         let mut y = min.1 + 0.048;
         let line_height = 0.016;
+        let text_width = (width - ui_width(0.04)).max(0.05);
         for line in &lines {
-            ui.add_text(
+            y = ui.add_wrapped_text(
                 (min.0 + ui_width(0.02), y),
                 line_height,
+                text_width,
                 [0.88, 0.92, 1.0, 1.0],
                 line,
             );
-            y += line_height + 0.008;
+            y += 0.008;
         }
     }
     fn draw_config_overlay(&self, ui: &mut UiGeometry, editor: &ConfigEditor) {
@@ -2889,9 +3044,16 @@ impl<'window> State<'window> {
 
         let mut y = min.1 + 0.072;
         let line_height = 0.016;
+        let text_width = (width - 0.04).max(0.05);
         for line in &lines {
-            ui.add_text((min.0 + 0.02, y), line_height, [0.88, 0.92, 1.0, 1.0], line);
-            y += line_height + 0.008;
+            y = ui.add_wrapped_text(
+                (min.0 + 0.02, y),
+                line_height,
+                text_width,
+                [0.88, 0.92, 1.0, 1.0],
+                line,
+            );
+            y += 0.008;
         }
 
         let instructions: &[&str] = match editor.component {
@@ -2909,8 +3071,14 @@ impl<'window> State<'window> {
         };
 
         for line in instructions {
-            ui.add_text((min.0 + 0.02, y), 0.014, [0.76, 0.82, 0.94, 1.0], line);
-            y += 0.02;
+            y = ui.add_wrapped_text(
+                (min.0 + 0.02, y),
+                0.014,
+                text_width,
+                [0.76, 0.82, 0.94, 1.0],
+                line,
+            );
+            y += 0.006;
         }
     }
 
@@ -3766,6 +3934,78 @@ impl UiGeometry {
                 cursor_y += line_height;
             }
         }
+    }
+
+    fn add_wrapped_text(
+        &mut self,
+        origin: (f32, f32),
+        height: f32,
+        max_width: f32,
+        color: [f32; 4],
+        text: &str,
+    ) -> f32 {
+        if height <= 0.0 || max_width <= 0.0 {
+            return origin.1;
+        }
+        let content = text.trim();
+        if content.is_empty() {
+            return origin.1;
+        }
+
+        let scale = height / FONT_HEIGHT as f32;
+        let char_width = FONT_WIDTH as f32 * scale;
+        let spacing = scale * 0.4;
+        let char_step = char_width + spacing;
+        let line_height = height + scale * 1.6;
+
+        let mut lines: Vec<String> = Vec::new();
+        let mut current_line = String::new();
+        let mut current_width = 0.0;
+
+        let flush_line = |lines: &mut Vec<String>, line: &mut String, width: &mut f32| {
+            if !line.is_empty() {
+                lines.push(std::mem::take(line));
+                *width = 0.0;
+            }
+        };
+
+        for word in content.split_whitespace() {
+            let word_width = word.chars().count() as f32 * char_step;
+            if !current_line.is_empty() && current_width + char_step + word_width > max_width {
+                flush_line(&mut lines, &mut current_line, &mut current_width);
+            }
+
+            if !current_line.is_empty() {
+                current_line.push(' ');
+                current_width += char_step;
+            }
+
+            if word_width > max_width {
+                for ch in word.chars() {
+                    if !current_line.is_empty() && current_width + char_step > max_width {
+                        flush_line(&mut lines, &mut current_line, &mut current_width);
+                    }
+                    current_line.push(ch);
+                    current_width += char_step;
+                }
+            } else {
+                current_line.push_str(word);
+                current_width += word_width;
+            }
+        }
+
+        flush_line(&mut lines, &mut current_line, &mut current_width);
+
+        if lines.is_empty() {
+            return origin.1;
+        }
+
+        let mut y = origin.1;
+        for line in lines {
+            self.add_text((origin.0, y), height, color, &line);
+            y += line_height;
+        }
+        y
     }
 
     fn add_rect_internal(
