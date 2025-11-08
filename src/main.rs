@@ -2749,10 +2749,13 @@ impl<'window> State<'window> {
             &info.label.to_ascii_uppercase(),
         );
 
-        let mut lines: Vec<String> = vec![format!(
-            "Live Voltage: {:.2} V | Live Current: {:.2} A",
-            info.telemetry.voltage, info.telemetry.current
-        )];
+        let mut lines: Vec<String> = vec![
+            format!(
+                "Ground Voltage: {:.2} V | Local Voltage: {:.2} V",
+                info.telemetry.voltage_ground, info.telemetry.voltage_local
+            ),
+            format!("Live Current: {:.2} A", info.telemetry.current),
+        ];
         let orientation_line = match info.component {
             ElectricalComponent::Ground => format!(
                 "Ground link: {} <-> {}",
@@ -2838,10 +2841,13 @@ impl<'window> State<'window> {
             .unwrap_or_else(|| editor.component.default_axis());
         let (positive_face, negative_face) =
             editor.component.terminal_faces(axis, editor.handle.face);
-        let mut lines: Vec<String> = vec![format!(
-            "Live Voltage: {:.2} V | Live Current: {:.2} A",
-            telemetry.voltage, telemetry.current
-        )];
+        let mut lines: Vec<String> = vec![
+            format!(
+                "Ground Voltage: {:.2} V | Local Voltage: {:.2} V",
+                telemetry.voltage_ground, telemetry.voltage_local
+            ),
+            format!("Live Current: {:.2} A", telemetry.current),
+        ];
         let orientation_line = match editor.component {
             ElectricalComponent::Ground => format!(
                 "Ground link: {} <-> {}",

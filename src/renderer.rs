@@ -815,7 +815,7 @@ impl<'window> Renderer<'window> {
         for (index, (pos, component, telemetry)) in overlays.iter().enumerate() {
             let base_color = component_color(*component);
             let current_strength = telemetry.current.abs();
-            let voltage_strength = telemetry.voltage.abs();
+            let voltage_strength = telemetry.voltage_local.abs();
             let intensity = (current_strength * 0.4 + voltage_strength * 0.05).min(3.0);
             let pulse = (animation_time * 4.0 + index as f32 * 0.7).sin() * 0.5 + 0.5;
             let brightness = (0.6 + intensity * 0.25 + pulse * 0.2).clamp(0.0, 2.0);
