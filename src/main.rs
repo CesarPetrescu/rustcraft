@@ -1120,16 +1120,18 @@ impl<'window> State<'window> {
     }
 
     fn crosshair_screen_uv(&self) -> (f32, f32) {
-        self.ui_scaler.project((0.5, 0.5))
+        // Always use true screen center for raycasting
+        (0.5, 0.5)
     }
 
     fn crosshair_ui_center(&self) -> (f32, f32) {
-        self.ui_scaler.unproject(self.crosshair_screen_uv())
+        // UI position for rendering the crosshair (adjusted for aspect ratio)
+        self.ui_scaler.unproject(self.ui_scaler.project((0.5, 0.5)))
     }
 
     fn crosshair_direction(&self) -> Vector3<f32> {
-        let screen = self.crosshair_screen_uv();
-        self.projection.ray_direction(&self.camera, screen)
+        // Use true screen center for accurate raycasting
+        self.projection.ray_direction(&self.camera, self.crosshair_screen_uv())
     }
 
     fn set_mouse_grab(&mut self, grab: bool) {
