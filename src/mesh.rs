@@ -1470,21 +1470,78 @@ fn append_component_mesh(
             primary_sign,
             secondary_sign,
         ),
-        ElectricalComponent::Ground => append_ground_mesh(
-            mesh,
-            material,
-            block_center,
-            block_half,
-            normal,
-            tangent,
-            bitangent,
-            &uvs,
-            scale,
-            mount_present,
-            mount_connected,
-            opposite_present,
-            opposite_connected,
-        ),
+        ElectricalComponent::Ground => {
+            append_ground_mesh(
+                mesh,
+                material,
+                block_center,
+                block_half,
+                normal,
+                tangent,
+                bitangent,
+                &uvs,
+                scale,
+                mount_present,
+                mount_connected,
+                opposite_present,
+                opposite_connected,
+            );
+            // Ground connects from all 6 sides, so render connection plates for all directions
+            // Use explicit face vectors instead of axis-based logic
+            let face_directions = [
+                (BlockFace::East, Vector3::new(1.0, 0.0, 0.0)),
+                (BlockFace::West, Vector3::new(-1.0, 0.0, 0.0)),
+                (BlockFace::Top, Vector3::new(0.0, 1.0, 0.0)),
+                (BlockFace::Bottom, Vector3::new(0.0, -1.0, 0.0)),
+                (BlockFace::South, Vector3::new(0.0, 0.0, 1.0)),
+                (BlockFace::North, Vector3::new(0.0, 0.0, -1.0)),
+            ];
+
+            for (face_type, face_dir) in face_directions.iter() {
+                if !connector_present(&connectors, *face_type) {
+                    continue;
+                }
+                let is_connected = connection_active(&connectors, &connections, *face_type);
+                let (top_uv, side_uv) = if *face_type == face || *face_type == face.opposite() {
+                    if is_connected {
+                        (uvs.top_connected, uvs.side_connected)
+                    } else {
+                        (uvs.top_unconnected, uvs.side_unconnected)
+                    }
+                } else {
+                    if is_connected {
+                        (uvs.side_connected, uvs.side_connected)
+                    } else {
+                        (uvs.side_unconnected, uvs.side_unconnected)
+                    }
+                };
+
+                // Calculate tangent and bitangent for this face
+                let face_normal: Vector3<f32> = *face_dir;
+                let face_tangent = if face_normal.x.abs() < 0.5 {
+                    Vector3::new(1.0, 0.0, 0.0)
+                } else {
+                    Vector3::new(0.0, 1.0, 0.0)
+                };
+                let face_tangent = (face_tangent - face_normal * face_tangent.dot(face_normal)).normalize();
+                let face_bitangent = face_normal.cross(face_tangent).normalize();
+
+                emit_connection_plate(
+                    mesh,
+                    block_center,
+                    block_half,
+                    face_normal,
+                    face_tangent,
+                    face_bitangent,
+                    scale,
+                    is_connected,
+                    top_uv,
+                    side_uv,
+                    material,
+                );
+            }
+            return; // Skip the axis-based connection plate rendering below
+        }
     }
 
     if primary_lead.forward_present {
