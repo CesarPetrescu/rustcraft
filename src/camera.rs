@@ -1,4 +1,4 @@
-use cgmath::{perspective, vec3, InnerSpace, Matrix4, Point3, Rad, SquareMatrix, Vector3, Vector4};
+use cgmath::{perspective, vec3, InnerSpace, Matrix4, Point3, Rad, Vector3};
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
@@ -91,24 +91,25 @@ impl Projection {
     }
 
     pub fn ray_direction(&self, camera: &Camera, screen: (f32, f32)) -> Vector3<f32> {
-        let ndc_x = screen.0 * 2.0 - 1.0;
-        let ndc_y = 1.0 - screen.1 * 2.0;
-
-        let proj = self.build_matrix();
-        let view = Matrix4::look_to_rh(camera.position, camera.direction(), Camera::UP);
-        if let (Some(inv_proj), Some(inv_view)) = (proj.invert(), view.invert()) {
-            let clip = Vector4::new(ndc_x, ndc_y, -1.0, 1.0);
-            let mut view_dir = inv_proj * clip;
-            if view_dir.w.abs() > 1e-6 {
-                view_dir /= view_dir.w;
-            }
-            let mut dir = inv_view * Vector4::new(view_dir.x, view_dir.y, -1.0, 0.0);
-            if dir.w.abs() > 1e-6 {
-                dir /= dir.w;
-            }
-            Vector3::new(dir.x, dir.y, dir.z).normalize()
+        let forward = camera.direction();
+        let mut right = forward.cross(Camera::UP);
+        if right.magnitude2() < 1e-6 {
+            // Forward is nearly vertical; fall back to a fixed axis to form a basis.
+            right = Vector3::new(1.0, 0.0, 0.0);
         } else {
-            camera.direction()
+            right = right.normalize();
+        }
+        let up = right.cross(forward).normalize();
+
+        let tan_half_fov = (self.fov_y.0 * 0.5).tan();
+        let sensor_x = (2.0 * screen.0 - 1.0) * tan_half_fov * self.aspect;
+        let sensor_y = (1.0 - 2.0 * screen.1) * tan_half_fov;
+
+        let dir = forward + right * sensor_x + up * sensor_y;
+        if dir.magnitude2() < 1e-6 {
+            forward
+        } else {
+            dir.normalize()
         }
     }
 }
@@ -359,5 +360,51 @@ impl CameraController {
         self.horizontal_velocity = Vector3::new(0.0, 0.0, 0.0);
         self.velocity_y = 0.0;
         self.scroll = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cgmath::{point3, InnerSpace};
+
+    #[test]
+    fn center_ray_matches_camera_direction() {
+        let projection = Projection::new(800, 600, 60f32.to_radians(), 0.1, 100.0);
+        let camera = Camera::new(point3(0.0, 1.6, 0.0), Rad(0.8), Rad(-0.25));
+        let ray = projection.ray_direction(&camera, (0.5, 0.5));
+        let view = camera.direction();
+        assert!(
+            (ray - view).magnitude() < 1e-5,
+            "ray {:?} should match {:?}",
+            ray,
+            view
+        );
+    }
+
+    #[test]
+    fn ray_moves_with_screen_offset() {
+        let projection = Projection::new(1920, 1080, 70f32.to_radians(), 0.1, 500.0);
+        let camera = Camera::new(point3(4.0, 2.0, -2.0), Rad(1.2), Rad(-0.35));
+        let left = projection.ray_direction(&camera, (0.25, 0.5));
+        let right = projection.ray_direction(&camera, (0.75, 0.5));
+        let up = projection.ray_direction(&camera, (0.5, 0.25));
+        let down = projection.ray_direction(&camera, (0.5, 0.75));
+        let camera_right = camera.right();
+        let camera_up = Camera::UP;
+
+        assert!(
+            right.dot(camera_right) > left.dot(camera_right),
+            "expected right ray {:?} to lean more towards {:?} than left {:?}",
+            right,
+            camera_right,
+            left
+        );
+        assert!(
+            up.dot(camera_up) > down.dot(camera_up),
+            "expected up ray {:?} to lean upward relative to down {:?}",
+            up,
+            down
+        );
     }
 }
