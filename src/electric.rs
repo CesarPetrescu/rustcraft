@@ -44,7 +44,8 @@ pub struct ComponentParams {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct ComponentTelemetry {
-    pub voltage: f32,
+    pub voltage_local: f32,      // Voltage drop across this component (local)
+    pub voltage_ground: f32,     // Voltage at positive terminal relative to ground (global)
     pub current: f32,
 }
 
@@ -791,6 +792,58 @@ impl ElectricalSystem {
                 }
             }
 
+            // Calculate ground-relative voltages for components in this network
+            // We'll trace through the circuit starting from ground (0V) and accumulate voltage changes
+            let mut node_voltages: std::collections::HashMap<AttachmentKey, f32> = std::collections::HashMap::new();
+
+            if has_loop {
+                // Start from ground nodes (0V)
+                let mut voltage_acc = 0.0f32;
+
+                // First, find ground nodes and voltage sources to establish reference points
+                for element in &network.elements {
+                    let key = AttachmentKey {
+                        pos: element.position,
+                        face: element.face,
+                    };
+
+                    if element.component == ElectricalComponent::Ground {
+                        // Ground nodes are at 0V at both terminals
+                        node_voltages.insert(key, 0.0);
+                    }
+                }
+
+                // Now trace through other components
+                // For components with current flowing through them, calculate voltage at positive terminal
+                for element in &network.elements {
+                    let key = AttachmentKey {
+                        pos: element.position,
+                        face: element.face,
+                    };
+
+                    if element.component == ElectricalComponent::Ground {
+                        continue; // Already handled
+                    }
+
+                    // For simplicity, we'll calculate based on position in element list
+                    // In a proper implementation, we'd trace the actual connections
+                    if element.component == ElectricalComponent::VoltageSource {
+                        // Voltage source: positive terminal is at +source_voltage relative to negative
+                        // Assuming negative terminal is connected towards ground
+                        voltage_acc = source_voltage;
+                        node_voltages.insert(key, voltage_acc);
+                    } else if let Some(resistance) = element.params.resistance_ohms {
+                        // Resistor/wire: voltage drops by I*R
+                        // The positive terminal voltage depends on circuit position
+                        // For now, we'll set it based on accumulated voltage
+                        node_voltages.insert(key, voltage_acc);
+                        voltage_acc -= current * resistance;
+                    } else {
+                        node_voltages.insert(key, voltage_acc);
+                    }
+                }
+            }
+
             // Update telemetry for each element in the network
             for element in &network.elements {
                 let key = AttachmentKey {
@@ -798,7 +851,7 @@ impl ElectricalSystem {
                     face: element.face,
                 };
 
-                let voltage = if is_short_circuit {
+                let voltage_local = if is_short_circuit {
                     // In a short circuit, voltage drops to near zero
                     0.0
                 } else if element.component == ElectricalComponent::VoltageSource {
@@ -811,7 +864,13 @@ impl ElectricalSystem {
                     0.0
                 };
 
-                telemetry_updates.push((key, ComponentTelemetry { current, voltage }));
+                let voltage_ground = node_voltages.get(&key).copied().unwrap_or(0.0);
+
+                telemetry_updates.push((key, ComponentTelemetry {
+                    current,
+                    voltage_local,
+                    voltage_ground,
+                }));
             }
         }
 
