@@ -1,6 +1,7 @@
 mod block;
 mod camera;
 mod chunk;
+mod crafting;
 mod electric;
 mod entity;
 mod fluid_gpu;
@@ -25,6 +26,7 @@ use camera::{
     Camera, CameraController, Projection, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS,
 };
 use cgmath::{point3, Point3, Rad, Vector3};
+use crafting::CraftingSystem;
 use entity::ItemEntity;
 use fluid_system::FluidSystem;
 use inventory::{Inventory, AVAILABLE_BLOCKS, HOTBAR_SIZE};
@@ -325,11 +327,15 @@ struct State<'window> {
     placement_progress: f32,
     // Item entities
     entities: Vec<ItemEntity>,
+    // Crafting system
+    crafting_open: bool,
+    crafting_grid: [Option<ItemType>; 9],
+    crafting_system: CraftingSystem,
 }
 
 impl<'window> State<'window> {
     fn is_in_menu(&self) -> bool {
-        self.paused || self.inventory_open || self.config_editor.is_some() || self.settings_open
+        self.paused || self.inventory_open || self.config_editor.is_some() || self.settings_open || self.crafting_open
     }
 
     fn mark_ui_dirty(&mut self) {
@@ -437,6 +443,42 @@ impl<'window> State<'window> {
         self.exit_menu_mode_if_needed();
         self.mark_ui_dirty();
         println!("Inventory closed.");
+    }
+
+    fn open_crafting(&mut self) {
+        if self.crafting_open {
+            return;
+        }
+        if self.paused {
+            self.close_pause();
+        }
+        if self.inventory_open {
+            self.close_inventory();
+        }
+        self.enter_menu_mode();
+        self.crafting_open = true;
+        self.crafting_grid = [None; 9];
+        self.mark_ui_dirty();
+        println!("Crafting opened (press C to close).");
+    }
+
+    fn close_crafting(&mut self) {
+        if !self.crafting_open {
+            return;
+        }
+        // Return items from crafting grid to inventory
+        for item in self.crafting_grid.iter_mut() {
+            if let Some(i) = item.take() {
+                if let Some(slot) = self.inventory.first_empty_slot() {
+                    self.inventory.set_slot(slot, Some(i));
+                }
+                // If no empty slot, item is lost (could drop as entity instead)
+            }
+        }
+        self.crafting_open = false;
+        self.exit_menu_mode_if_needed();
+        self.mark_ui_dirty();
+        println!("Crafting closed.");
     }
 
     fn open_settings(&mut self) {
@@ -810,6 +852,9 @@ impl<'window> State<'window> {
             left_mouse_held: false,
             placement_progress: 0.0,
             entities: Vec::new(),
+            crafting_open: false,
+            crafting_grid: [None; 9],
+            crafting_system: CraftingSystem::new(),
         };
 
         state.refresh_palette_filter();
@@ -884,6 +929,14 @@ impl<'window> State<'window> {
                                 self.close_inventory();
                             } else if !self.paused {
                                 self.open_inventory();
+                            }
+                            return true;
+                        }
+                        KeyCode::KeyC => {
+                            if self.crafting_open {
+                                self.close_crafting();
+                            } else if !self.paused {
+                                self.open_crafting();
                             }
                             return true;
                         }
@@ -2900,6 +2953,151 @@ impl<'window> State<'window> {
             ui.add_rect((min_x, min_y), (max_x, max_y), [0.95, 0.98, 1.0, 0.32]);
         }
     }
+
+    fn draw_crafting_overlay(&self, ui: &mut UiGeometry) {
+        // Darken background
+        ui.add_rect_fullscreen((0.0, 0.0), (1.0, 1.0), [0.0, 0.0, 0.0, 0.72]);
+
+        // Crafting panel
+        let panel_width = ui_width(0.6);
+        let panel_height = 0.7;
+        let panel_x = 0.5 - panel_width * 0.5;
+        let panel_y = 0.5 - panel_height * 0.5;
+
+        ui.add_panel(
+            (panel_x, panel_y),
+            (panel_x + panel_width, panel_y + panel_height),
+            [0.12, 0.14, 0.22, 0.96],
+            [0.18, 0.20, 0.28, 0.94],
+            Some([0.24, 0.28, 0.38, 0.4]),
+        );
+
+        // Title
+        ui.add_text(
+            (panel_x + ui_width(0.03), panel_y + 0.03),
+            0.024,
+            [0.88, 0.92, 1.0, 1.0],
+            "CRAFTING TABLE",
+        );
+
+        ui.add_text(
+            (panel_x + ui_width(0.03), panel_y + 0.06),
+            0.014,
+            [0.7, 0.75, 0.88, 1.0],
+            "Press C to close. Click items in your hotbar to place in grid.",
+        );
+
+        // 3x3 crafting grid
+        let grid_start_x = panel_x + ui_width(0.08);
+        let grid_start_y = panel_y + 0.15;
+        let slot_size = 0.08;
+        let slot_gap = 0.015;
+
+        for row in 0..3 {
+            for col in 0..3 {
+                let idx = row * 3 + col;
+                let x = grid_start_x + col as f32 * ui_width(slot_size + slot_gap);
+                let y = grid_start_y + row as f32 * (slot_size + slot_gap);
+                let min = (x, y);
+                let max = (x + ui_width(slot_size), y + slot_size);
+
+                // Slot background
+                ui.add_panel(
+                    min,
+                    max,
+                    [0.08, 0.09, 0.13, 0.96],
+                    [0.14, 0.16, 0.22, 0.92],
+                    None,
+                );
+
+                // Draw item in slot
+                if let Some(item) = self.crafting_grid[idx] {
+                    let icon_pad = 0.008;
+                    let icon_min = (min.0 + ui_width(icon_pad), min.1 + icon_pad);
+                    let icon_max = (max.0 - ui_width(icon_pad), max.1 - icon_pad);
+
+                    match item {
+                        ItemType::Block(block) => {
+                            ui.add_rect_textured(
+                                icon_min,
+                                icon_max,
+                                block.atlas_coords(BlockFace::Top),
+                                [1.0, 1.0, 1.0, 1.0],
+                            );
+                        }
+                        ItemType::Tool(_, _) => {
+                            ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Output slot
+        let output_x = grid_start_x + ui_width(3.5 * (slot_size + slot_gap));
+        let output_y = grid_start_y + (slot_size + slot_gap);
+        let output_min = (output_x, output_y);
+        let output_max = (output_x + ui_width(slot_size), output_y + slot_size);
+
+        // Arrow
+        let arrow_x = grid_start_x + ui_width(3.0 * (slot_size + slot_gap));
+        let arrow_y = grid_start_y + (slot_size + slot_gap) + slot_size * 0.35;
+        ui.add_text(
+            (arrow_x, arrow_y),
+            0.024,
+            [0.65, 0.7, 0.85, 1.0],
+            "->",
+        );
+
+        // Output slot background
+        ui.add_panel(
+            output_min,
+            output_max,
+            [0.28, 0.32, 0.42, 0.96],
+            [0.22, 0.26, 0.36, 0.92],
+            Some([0.32, 0.38, 0.52, 0.5]),
+        );
+
+        // Check for recipe match and draw output
+        if let Some((output_item, output_count)) = self.crafting_system.match_recipe(&self.crafting_grid) {
+            let icon_pad = 0.008;
+            let icon_min = (output_min.0 + ui_width(icon_pad), output_min.1 + icon_pad);
+            let icon_max = (output_max.0 - ui_width(icon_pad), output_max.1 - icon_pad);
+
+            match output_item {
+                ItemType::Block(block) => {
+                    ui.add_rect_textured(
+                        icon_min,
+                        icon_max,
+                        block.atlas_coords(BlockFace::Top),
+                        [1.0, 1.0, 1.0, 1.0],
+                    );
+                }
+                ItemType::Tool(_, _) => {
+                    ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                }
+            }
+
+            // Show count if > 1
+            if output_count > 1 {
+                ui.add_text(
+                    (output_max.0 - ui_width(0.02), output_max.1 - 0.02),
+                    0.014,
+                    [1.0, 1.0, 1.0, 1.0],
+                    &format!("{}", output_count),
+                );
+            }
+        }
+
+        // Recipe count info
+        ui.add_text(
+            (panel_x + ui_width(0.03), panel_y + panel_height - 0.05),
+            0.012,
+            [0.6, 0.65, 0.8, 0.9],
+            &format!("{} recipes available", self.crafting_system.recipe_count()),
+        );
+    }
+
     fn build_ui_geometry(&self) -> UiGeometry {
         let mut ui = UiGeometry::new(self.ui_scaler);
 
@@ -2957,6 +3155,10 @@ impl<'window> State<'window> {
 
         if self.inventory_open {
             self.draw_inventory_overlay(&mut ui);
+        }
+
+        if self.crafting_open {
+            self.draw_crafting_overlay(&mut ui);
         }
 
         if self.settings_open {
