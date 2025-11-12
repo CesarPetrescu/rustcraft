@@ -3454,13 +3454,31 @@ impl<'window> State<'window> {
                 let block = self.world.get_block(target_pos.0, target_pos.1, target_pos.2);
                 let hardness = block.hardness().max(0.1); // Minimum 0.1 to avoid division by zero
 
-                // Breaking speed: softer blocks break faster
-                // Base breaking time: 1 second for hardness=1.0
-                let break_speed = 1.0 / hardness;
+                // Get tool effectiveness multiplier
+                let selected_item = self.inventory.selected_item();
+                let tool_multiplier = selected_item.map(|item| {
+                    if item.is_effective_for(block) {
+                        item.mining_speed_multiplier()
+                    } else {
+                        // Not effective, but still gets some speed bonus
+                        item.mining_speed_multiplier() * 0.5
+                    }
+                }).unwrap_or(1.0); // Hand mining = 1x speed
+
+                // Breaking speed: softer blocks break faster, better tools mine faster
+                // Base breaking time: 1 second for hardness=1.0 with hand
+                let break_speed = (1.0 / hardness) * tool_multiplier;
                 self.breaking_progress += break_speed * tick_dt;
 
                 // If fully broken, remove the block
                 if self.breaking_progress >= 1.0 {
+                    // Damage tool if using one
+                    if let Some(ItemType::Tool(_, _)) = selected_item {
+                        if self.inventory.damage_selected_tool() {
+                            println!("Your tool broke!");
+                        }
+                    }
+
                     self.break_block();
                     self.breaking_block = None;
                     self.breaking_progress = 0.0;
