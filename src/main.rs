@@ -2,6 +2,7 @@ mod block;
 mod camera;
 mod chunk;
 mod electric;
+mod entity;
 mod fluid_gpu;
 mod fluid_system;
 mod inventory;
@@ -22,7 +23,8 @@ use anyhow::Context;
 use camera::{
     Camera, CameraController, Projection, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS,
 };
-use cgmath::{point3, Rad, Vector3};
+use cgmath::{point3, Point3, Rad, Vector3};
+use entity::ItemEntity;
 use fluid_system::FluidSystem;
 use inventory::{Inventory, AVAILABLE_BLOCKS, HOTBAR_SIZE};
 use renderer::{Renderer, UiVertex};
@@ -319,6 +321,8 @@ struct State<'window> {
     left_mouse_held: bool,
     // Hand animation state
     placement_progress: f32,
+    // Item entities
+    entities: Vec<ItemEntity>,
 }
 
 impl<'window> State<'window> {
@@ -803,6 +807,7 @@ impl<'window> State<'window> {
             breaking_progress: 0.0,
             left_mouse_held: false,
             placement_progress: 0.0,
+            entities: Vec::new(),
         };
 
         state.refresh_palette_filter();
@@ -1094,6 +1099,23 @@ impl<'window> State<'window> {
                 self.mark_block_dirty(hit.block_pos.0, hit.block_pos.1, hit.block_pos.2);
                 self.refresh_inspect_info();
             } else {
+                // Get the block type before breaking
+                let block = self.world.get_block(
+                    hit.block_pos.0,
+                    hit.block_pos.1,
+                    hit.block_pos.2,
+                );
+
+                // Spawn item entity if block is droppable
+                if block != BlockType::Air && block != BlockType::Water {
+                    let item_pos = Point3::new(
+                        hit.block_pos.0 as f32 + 0.5,
+                        hit.block_pos.1 as f32 + 0.5,
+                        hit.block_pos.2 as f32 + 0.5,
+                    );
+                    self.entities.push(ItemEntity::new(item_pos, block));
+                }
+
                 self.world.set_block(
                     hit.block_pos.0,
                     hit.block_pos.1,
@@ -3432,6 +3454,28 @@ impl<'window> State<'window> {
             }
         }
 
+        // Update item entities (physics and lifetime)
+        self.entities.retain_mut(|entity| entity.update(tick_dt, &self.world));
+
+        // Item pickup logic (when not in menu)
+        if !in_menu {
+            let player_pos = self.camera.position;
+            self.entities.retain(|entity| {
+                if entity.can_pickup() && entity.in_pickup_range(player_pos) {
+                    // Try to add to inventory
+                    if let Some(empty_slot) = self.inventory.first_empty_slot() {
+                        self.inventory.set_slot(empty_slot, Some(entity.item_type));
+                        println!("Picked up {}!", entity.item_type.name());
+                        false // Remove entity
+                    } else {
+                        true // Keep entity (inventory full)
+                    }
+                } else {
+                    true // Keep entity
+                }
+            });
+        }
+
         self.world.advance_time(tick_dt);
 
         // Increment tick counters
@@ -3600,6 +3644,9 @@ impl<'window> State<'window> {
             .update_power_overlays(&power_instances, self.animation_time);
         self.renderer.update_highlight(highlight_bounds, self.breaking_progress);
         self.update_inspect_state(new_highlight, new_info);
+
+        // Update item entities
+        self.renderer.update_entities(&self.entities);
 
         if in_menu {
             self.renderer.update_hand(

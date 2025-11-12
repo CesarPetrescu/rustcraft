@@ -26,6 +26,8 @@ const INITIAL_HIGHLIGHT_CAPACITY: usize = 128;
 const INITIAL_POWER_CAPACITY: usize = 512;
 const INITIAL_HAND_VERTEX_CAPACITY: usize = 128;
 const INITIAL_HAND_INDEX_CAPACITY: usize = 192;
+const INITIAL_ENTITY_VERTEX_CAPACITY: usize = 2048;
+const INITIAL_ENTITY_INDEX_CAPACITY: usize = 3072;
 const INITIAL_UI_VERTEX_CAPACITY: usize = 512;
 const INITIAL_UI_INDEX_CAPACITY: usize = 1024;
 
@@ -263,6 +265,11 @@ pub struct Renderer<'window> {
     hand_vertex_capacity: usize,
     hand_index_capacity: usize,
     hand_index_count: u32,
+    entity_vertex_buffer: wgpu::Buffer,
+    entity_index_buffer: wgpu::Buffer,
+    entity_vertex_capacity: usize,
+    entity_index_capacity: usize,
+    entity_index_count: u32,
     ui_vertex_buffer: wgpu::Buffer,
     ui_index_buffer: wgpu::Buffer,
     ui_vertex_capacity: usize,
@@ -627,6 +634,19 @@ impl<'window> Renderer<'window> {
             mapped_at_creation: false,
         });
 
+        let entity_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("entity_vertex_buffer"),
+            size: (INITIAL_ENTITY_VERTEX_CAPACITY.max(1) * mem::size_of::<BlockVertex>()) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let entity_index_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("entity_index_buffer"),
+            size: (INITIAL_ENTITY_INDEX_CAPACITY.max(1) * mem::size_of::<u32>()) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
         let ui_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("ui_vertex_buffer"),
             size: (INITIAL_UI_VERTEX_CAPACITY.max(1) * mem::size_of::<UiVertex>()) as u64,
@@ -675,6 +695,11 @@ impl<'window> Renderer<'window> {
             hand_vertex_capacity: INITIAL_HAND_VERTEX_CAPACITY.max(1),
             hand_index_capacity: INITIAL_HAND_INDEX_CAPACITY.max(1),
             hand_index_count: 0,
+            entity_vertex_buffer,
+            entity_index_buffer,
+            entity_vertex_capacity: INITIAL_ENTITY_VERTEX_CAPACITY.max(1),
+            entity_index_capacity: INITIAL_ENTITY_INDEX_CAPACITY.max(1),
+            entity_index_count: 0,
             ui_vertex_buffer,
             ui_index_buffer,
             ui_vertex_capacity: INITIAL_UI_VERTEX_CAPACITY.max(1),
@@ -999,6 +1024,61 @@ impl<'window> Renderer<'window> {
         self.hand_index_count = mesh.indices.len() as u32;
     }
 
+    pub fn update_entities(&mut self, entities: &[crate::entity::ItemEntity]) {
+        use crate::mesh;
+        use cgmath::Quaternion;
+
+        let mut combined_vertices = Vec::new();
+        let mut combined_indices = Vec::new();
+
+        for entity in entities {
+            let scale = 0.25; // Small item size
+            let origin = Vector3::new(0.0, 0.0, 0.0);
+            let mut item_mesh = mesh::generate_block_mesh(entity.item_type, origin, scale);
+
+            // Apply rotation (spin on Y axis)
+            let rotation = Quaternion::from_angle_y(Rad(entity.rotation));
+
+            let base_index = combined_vertices.len() as u32;
+
+            for vertex in &mut item_mesh.vertices {
+                let v = Vector3::new(vertex.position[0], vertex.position[1], vertex.position[2]);
+                let v = rotation.rotate_vector(v);
+
+                // Translate to entity position
+                vertex.position = [
+                    v.x + entity.position.x,
+                    v.y + entity.position.y,
+                    v.z + entity.position.z,
+                ];
+                vertex.tint = [1.0, 1.0, 1.0];
+                combined_vertices.push(*vertex);
+            }
+
+            for &index in &item_mesh.indices {
+                combined_indices.push(base_index + index);
+            }
+        }
+
+        self.ensure_entity_capacity(combined_vertices.len(), combined_indices.len());
+
+        if !combined_vertices.is_empty() {
+            self.queue.write_buffer(
+                &self.entity_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&combined_vertices),
+            );
+        }
+        if !combined_indices.is_empty() {
+            self.queue.write_buffer(
+                &self.entity_index_buffer,
+                0,
+                bytemuck::cast_slice(&combined_indices),
+            );
+        }
+        self.entity_index_count = combined_indices.len() as u32;
+    }
+
     pub fn update_ui(&mut self, vertices: &[UiVertex], indices: &[u16]) {
         self.ui_vertices.clear();
         self.ui_vertices.extend_from_slice(vertices);
@@ -1090,6 +1170,13 @@ impl<'window> Renderer<'window> {
             pass.set_bind_group(1, &self.texture_atlas.bind_group, &[]);
             pass.set_bind_group(2, &self.environment_bind_group, &[]);
             self.draw_world_chunks(&mut pass, &frustum);
+
+            // Draw item entities
+            if self.entity_index_count > 0 {
+                pass.set_vertex_buffer(0, self.entity_vertex_buffer.slice(..));
+                pass.set_index_buffer(self.entity_index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..self.entity_index_count, 0, 0..1);
+            }
 
             if self.highlight_vertex_count > 0 || self.power_vertex_count > 0 {
                 pass.set_pipeline(&self.highlight_pipeline);
@@ -1187,6 +1274,30 @@ impl<'window> Renderer<'window> {
             self.hand_index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("hand_index_buffer"),
                 size: (self.hand_index_capacity * mem::size_of::<u32>()) as u64,
+                usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+    }
+
+    fn ensure_entity_capacity(&mut self, vertices: usize, indices: usize) {
+        let vertices = vertices.max(1);
+        if vertices > self.entity_vertex_capacity {
+            self.entity_vertex_capacity = vertices.next_power_of_two();
+            self.entity_vertex_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("entity_vertex_buffer"),
+                size: (self.entity_vertex_capacity * mem::size_of::<BlockVertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+
+        let indices = indices.max(1);
+        if indices > self.entity_index_capacity {
+            self.entity_index_capacity = indices.next_power_of_two();
+            self.entity_index_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("entity_index_buffer"),
+                size: (self.entity_index_capacity * mem::size_of::<u32>()) as u64,
                 usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
