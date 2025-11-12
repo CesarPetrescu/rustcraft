@@ -6,6 +6,7 @@ mod entity;
 mod fluid_gpu;
 mod fluid_system;
 mod inventory;
+mod item;
 mod lighting;
 mod mesh;
 mod npu;
