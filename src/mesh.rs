@@ -329,7 +329,7 @@ pub fn generate_block_mesh(block: BlockType, origin: Vector3<f32>, scale: f32) -
             ];
 
             for (face, normal) in faces {
-                let quad = build_face(face, normal, block, origin_array, half_extent);
+                let quad = build_face(face, normal, block, origin_array, half_extent, 15);
                 mesh.push_quad(quad);
             }
         }
@@ -415,12 +415,15 @@ fn append_solid_block(
 
     for (face, (nx, ny, nz), normal) in neighbors.iter() {
         if !world.get_block(*nx, *ny, *nz).occludes() {
+            // Sample light at the block's own position
+            let light = world.get_light(x, y, z);
             let quad = build_face(
                 *face,
                 *normal,
                 block,
                 [x as f32, y as f32, z as f32],
                 HALF_BLOCK,
+                light,
             );
             mesh.push_quad(quad);
         }
@@ -433,11 +436,13 @@ fn build_face(
     block: BlockType,
     origin: [f32; 3],
     half_extent: f32,
+    light: u8,
 ) -> [Vertex; 4] {
     let (tile_x, tile_y) = block.atlas_coords(face);
     let (u_min, u_max, v_min, v_max) = atlas_uv_bounds(tile_x, tile_y);
     let material = material_for_block(block);
     let (ox, oy, oz) = (origin[0], origin[1], origin[2]);
+    let light_f32 = light as f32;
 
     let (p0, p1, p2, p3) = match face {
         BlockFace::Top => (
@@ -485,7 +490,7 @@ fn build_face(
             uv: [u_min, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
-            light: 15.0,
+            light: light_f32,
         },
         Vertex {
             position: p1,
@@ -493,7 +498,7 @@ fn build_face(
             uv: [u_max, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
-            light: 15.0,
+            light: light_f32,
         },
         Vertex {
             position: p2,
@@ -501,7 +506,7 @@ fn build_face(
             uv: [u_max, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
-            light: 15.0,
+            light: light_f32,
         },
         Vertex {
             position: p3,
@@ -509,7 +514,7 @@ fn build_face(
             uv: [u_min, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
-            light: 15.0,
+            light: light_f32,
         },
     ]
 }

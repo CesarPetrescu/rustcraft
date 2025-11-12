@@ -790,6 +790,25 @@ impl World {
         &self.chunks
     }
 
+    /// Get light level at world coordinates (0-15)
+    pub fn get_light(&self, x: i32, y: i32, z: i32) -> u8 {
+        if y < 0 || y >= CHUNK_HEIGHT as i32 {
+            return if y >= CHUNK_HEIGHT as i32 { 15 } else { 0 };
+        }
+
+        let chunk_x = x.div_euclid(CHUNK_SIZE as i32);
+        let chunk_z = z.div_euclid(CHUNK_SIZE as i32);
+        let local_x = x.rem_euclid(CHUNK_SIZE as i32) as usize;
+        let local_y = y as usize;
+        let local_z = z.rem_euclid(CHUNK_SIZE as i32) as usize;
+
+        if let Some(chunk) = self.chunks.get(&ChunkPos { x: chunk_x, z: chunk_z }) {
+            chunk.get_light(local_x, local_y, local_z)
+        } else {
+            15 // Default to full light for unloaded chunks
+        }
+    }
+
     pub fn electrical(&self) -> &ElectricalSystem {
         &self.electrical
     }
@@ -1112,6 +1131,7 @@ impl World {
         let player_chunk_x = (camera_pos.x / CHUNK_SIZE as f32).floor() as i32;
         let player_chunk_z = (camera_pos.z / CHUNK_SIZE as f32).floor() as i32;
         let mut changed = false;
+        let mut new_chunks = Vec::new();
 
         for cz in (player_chunk_z - render_distance)..=(player_chunk_z + render_distance) {
             for cx in (player_chunk_x - render_distance)..=(player_chunk_x + render_distance) {
@@ -1123,9 +1143,17 @@ impl World {
                     if has_fluid {
                         self.queue_fluid_chunk(pos);
                     }
+                    new_chunks.push(pos);
                     changed = true;
                 }
             }
+        }
+
+        // Calculate lighting for newly generated chunks
+        use crate::lighting::LightingSystem;
+        for pos in new_chunks {
+            LightingSystem::calculate_skylight(self, pos);
+            LightingSystem::calculate_blocklight(self, pos);
         }
 
         let unload_distance = render_distance + 2;

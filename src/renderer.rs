@@ -1212,6 +1212,11 @@ fn block_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 offset: 36,
                 shader_location: 4,
             },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32,
+                offset: 48,
+                shader_location: 5,
+            },
         ],
     }
 }
