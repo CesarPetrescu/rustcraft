@@ -313,6 +313,12 @@ struct State<'window> {
     settings_active_slider: Option<SettingsSlider>,
     settings_fov_slider: Cell<Option<Rect>>,
     settings_sensitivity_slider: Cell<Option<Rect>>,
+    // Block breaking state
+    breaking_block: Option<(i32, i32, i32)>,
+    breaking_progress: f32,
+    left_mouse_held: bool,
+    // Hand animation state
+    placement_progress: f32,
 }
 
 impl<'window> State<'window> {
@@ -793,6 +799,10 @@ impl<'window> State<'window> {
             settings_active_slider: None,
             settings_fov_slider: Cell::new(None),
             settings_sensitivity_slider: Cell::new(None),
+            breaking_block: None,
+            breaking_progress: 0.0,
+            left_mouse_held: false,
+            placement_progress: 0.0,
         };
 
         state.refresh_palette_filter();
@@ -907,15 +917,25 @@ impl<'window> State<'window> {
                         self.set_mouse_grab(true);
                         return true;
                     }
-                } else if *state == ElementState::Pressed {
+                } else {
                     match button {
                         MouseButton::Left => {
-                            self.break_block();
-                            return true;
+                            if *state == ElementState::Pressed {
+                                self.left_mouse_held = true;
+                                return true;
+                            } else {
+                                self.left_mouse_held = false;
+                                // Reset breaking state when mouse released
+                                self.breaking_block = None;
+                                self.breaking_progress = 0.0;
+                                return true;
+                            }
                         }
                         MouseButton::Right => {
-                            self.place_block();
-                            return true;
+                            if *state == ElementState::Pressed {
+                                self.place_block();
+                                return true;
+                            }
                         }
                         _ => {}
                     }
@@ -1155,6 +1175,8 @@ impl<'window> State<'window> {
                     );
                 }
                 self.mark_block_dirty(place_pos.0, place_pos.1, place_pos.2);
+                // Trigger placement animation
+                self.placement_progress = 1.0;
             }
         }
     }
@@ -1175,6 +1197,8 @@ impl<'window> State<'window> {
         );
         self.mark_block_dirty(hit.block_pos.0, hit.block_pos.1, hit.block_pos.2);
         self.refresh_inspect_info();
+        // Trigger placement animation
+        self.placement_progress = 1.0;
     }
 
     fn mark_block_dirty(&mut self, world_x: i32, _world_y: i32, world_z: i32) {
@@ -3361,6 +3385,53 @@ impl<'window> State<'window> {
         }
         self.projection.animate(tick_dt);
 
+        // Handle block breaking
+        if !in_menu && self.left_mouse_held {
+            let direction = self.crosshair_direction();
+            if let Some(hit) = raycast(&self.world, self.camera.position, direction, 5.0) {
+                let target_pos = hit.block_pos;
+
+                // Check if we're still targeting the same block
+                if self.breaking_block != Some(target_pos) {
+                    // Started breaking a different block, reset progress
+                    self.breaking_block = Some(target_pos);
+                    self.breaking_progress = 0.0;
+                }
+
+                // Get block hardness to determine breaking speed
+                let block = self.world.get_block(target_pos.0, target_pos.1, target_pos.2);
+                let hardness = block.hardness().max(0.1); // Minimum 0.1 to avoid division by zero
+
+                // Breaking speed: softer blocks break faster
+                // Base breaking time: 1 second for hardness=1.0
+                let break_speed = 1.0 / hardness;
+                self.breaking_progress += break_speed * tick_dt;
+
+                // If fully broken, remove the block
+                if self.breaking_progress >= 1.0 {
+                    self.break_block();
+                    self.breaking_block = None;
+                    self.breaking_progress = 0.0;
+                }
+            } else {
+                // Not looking at any block, reset breaking
+                self.breaking_block = None;
+                self.breaking_progress = 0.0;
+            }
+        } else {
+            // Mouse not held, ensure state is reset
+            self.breaking_block = None;
+            self.breaking_progress = 0.0;
+        }
+
+        // Decay placement animation (animation lasts ~0.3 seconds)
+        if self.placement_progress > 0.0 {
+            self.placement_progress -= tick_dt * 3.3; // Decay rate
+            if self.placement_progress < 0.0 {
+                self.placement_progress = 0.0;
+            }
+        }
+
         self.world.advance_time(tick_dt);
 
         // Increment tick counters
@@ -3527,14 +3598,25 @@ impl<'window> State<'window> {
         };
         self.renderer
             .update_power_overlays(&power_instances, self.animation_time);
-        self.renderer.update_highlight(highlight_bounds);
+        self.renderer.update_highlight(highlight_bounds, self.breaking_progress);
         self.update_inspect_state(new_highlight, new_info);
 
         if in_menu {
-            self.renderer.update_hand(None, &self.camera);
+            self.renderer.update_hand(
+                None,
+                &self.camera,
+                self.animation_time,
+                0.0,
+                0.0,
+            );
         } else {
-            self.renderer
-                .update_hand(self.inventory.selected_block(), &self.camera);
+            self.renderer.update_hand(
+                self.inventory.selected_block(),
+                &self.camera,
+                self.animation_time,
+                self.breaking_progress,
+                self.placement_progress,
+            );
         }
 
         if !in_menu && self.world_dirty {

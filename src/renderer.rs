@@ -811,7 +811,7 @@ impl<'window> Renderer<'window> {
         }
     }
 
-    pub fn update_highlight(&mut self, bounds: Option<([f32; 3], [f32; 3])>) {
+    pub fn update_highlight(&mut self, bounds: Option<([f32; 3], [f32; 3])>, breaking_progress: f32) {
         self.highlight_vertices.clear();
 
         if let Some((min, max)) = bounds {
@@ -839,7 +839,13 @@ impl<'window> Renderer<'window> {
                 (2, 6),
                 (3, 7),
             ];
-            let color = [1.0, 0.95, 0.45, 0.85];
+            // Color transitions from yellow (no breaking) to red (almost broken)
+            let progress = breaking_progress.clamp(0.0, 1.0);
+            let red = 1.0;
+            let green = 0.95 - progress * 0.5; // 0.95 -> 0.45
+            let blue = 0.45 - progress * 0.45; // 0.45 -> 0.0
+            let alpha = 0.85 + progress * 0.15; // 0.85 -> 1.0 (more visible as breaking)
+            let color = [red, green, blue, alpha];
             for &(a, b) in &EDGES {
                 self.highlight_vertices.push(HighlightVertex {
                     position: corners[a],
@@ -916,7 +922,14 @@ impl<'window> Renderer<'window> {
         }
     }
 
-    pub fn update_hand(&mut self, block_type: Option<BlockType>, camera: &Camera) {
+    pub fn update_hand(
+        &mut self,
+        block_type: Option<BlockType>,
+        camera: &Camera,
+        animation_time: f32,
+        breaking_progress: f32,
+        placement_progress: f32,
+    ) {
         let Some(block_type) = block_type else {
             self.hand_index_count = 0;
             return;
@@ -926,8 +939,31 @@ impl<'window> Renderer<'window> {
         let origin = Vector3::new(0.0, 0.0, 0.0);
         let mut mesh = mesh::generate_block_mesh(block_type, origin, scale);
 
-        let hand_offset =
+        // Base hand position
+        let mut hand_offset =
             camera.right() * 0.32 + camera.direction() * 0.5 - Vector3::new(0.0, 0.45, 0.0);
+
+        // Idle sway animation (subtle bob and sway)
+        let idle_sway_x = (animation_time * 1.5).sin() * 0.01;
+        let idle_sway_y = (animation_time * 2.0).sin() * 0.008;
+        hand_offset += Vector3::new(idle_sway_x, idle_sway_y, 0.0);
+
+        // Breaking animation (shake)
+        if breaking_progress > 0.0 {
+            let shake_intensity = breaking_progress * 0.025;
+            let shake_x = (animation_time * 25.0).sin() * shake_intensity;
+            let shake_y = (animation_time * 30.0).cos() * shake_intensity;
+            hand_offset += Vector3::new(shake_x, shake_y, 0.0);
+        }
+
+        // Placement animation (forward thrust that decays)
+        if placement_progress > 0.0 {
+            // Quick forward motion that eases out
+            let thrust = (1.0 - placement_progress).powi(2) * 0.15;
+            hand_offset += camera.direction() * thrust;
+            hand_offset -= Vector3::new(0.0, (1.0 - placement_progress).powi(2) * 0.05, 0.0);
+        }
+
         let hand_pos = Vector3::new(
             camera.position.x + hand_offset.x,
             camera.position.y + hand_offset.y,
