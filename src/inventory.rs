@@ -1,4 +1,5 @@
 use crate::block::BlockType;
+use crate::item::ItemType;
 
 pub const HOTBAR_SIZE: usize = 9;
 pub const AVAILABLE_BLOCKS: [BlockType; 18] = [
@@ -23,7 +24,7 @@ pub const AVAILABLE_BLOCKS: [BlockType; 18] = [
 ];
 
 pub struct Inventory {
-    pub hotbar: [Option<BlockType>; HOTBAR_SIZE],
+    pub hotbar: [Option<ItemType>; HOTBAR_SIZE],
     pub selected_slot: usize,
 }
 
@@ -31,15 +32,15 @@ impl Inventory {
     pub fn new() -> Self {
         Self {
             hotbar: [
-                Some(BlockType::Grass),
-                Some(BlockType::Dirt),
-                Some(BlockType::Stone),
-                Some(BlockType::CopperWire),
-                Some(BlockType::Resistor),
-                Some(BlockType::VoltageSource),
-                Some(BlockType::Ground),
-                Some(BlockType::Water),
-                Some(BlockType::FlowerRose),
+                Some(ItemType::Block(BlockType::Grass)),
+                Some(ItemType::Block(BlockType::Dirt)),
+                Some(ItemType::Block(BlockType::Stone)),
+                Some(ItemType::Block(BlockType::CopperWire)),
+                Some(ItemType::Block(BlockType::Resistor)),
+                Some(ItemType::Block(BlockType::VoltageSource)),
+                Some(ItemType::Block(BlockType::Ground)),
+                Some(ItemType::Block(BlockType::Water)),
+                Some(ItemType::Block(BlockType::FlowerRose)),
             ],
             selected_slot: 0,
         }
@@ -51,8 +52,17 @@ impl Inventory {
         }
     }
 
-    pub fn selected_block(&self) -> Option<BlockType> {
+    pub fn selected_item(&self) -> Option<ItemType> {
         self.hotbar[self.selected_slot]
+    }
+
+    /// Get selected block (for placement) - returns None if holding a tool
+    pub fn selected_block(&self) -> Option<BlockType> {
+        match self.hotbar[self.selected_slot] {
+            Some(ItemType::Block(block)) => Some(block),
+            Some(ItemType::Tool(_, _)) => None,
+            None => None,
+        }
     }
 
     pub fn selected_slot_index(&self) -> usize {
@@ -88,19 +98,20 @@ impl Inventory {
         }
 
         let current_index = self.hotbar[slot]
-            .and_then(|block| {
-                AVAILABLE_BLOCKS
+            .and_then(|item| match item {
+                ItemType::Block(block) => AVAILABLE_BLOCKS
                     .iter()
-                    .position(|candidate| *candidate == block)
+                    .position(|candidate| *candidate == block),
+                ItemType::Tool(_, _) => None,
             })
             .unwrap_or(0) as i32;
         let next_index = (current_index + delta).rem_euclid(total) as usize;
-        self.hotbar[slot] = Some(AVAILABLE_BLOCKS[next_index]);
+        self.hotbar[slot] = Some(ItemType::Block(AVAILABLE_BLOCKS[next_index]));
     }
 
-    pub fn set_slot(&mut self, slot: usize, block: Option<BlockType>) {
+    pub fn set_slot(&mut self, slot: usize, item: Option<ItemType>) {
         if slot < HOTBAR_SIZE {
-            self.hotbar[slot] = block;
+            self.hotbar[slot] = item;
         }
     }
 
@@ -111,4 +122,17 @@ impl Inventory {
     pub fn first_empty_slot(&self) -> Option<usize> {
         self.hotbar.iter().position(|slot| slot.is_none())
     }
+
+    /// Damage the currently selected tool, returns true if tool broke
+    pub fn damage_selected_tool(&mut self) -> bool {
+        if let Some(item) = &mut self.hotbar[self.selected_slot] {
+            if item.damage() {
+                // Tool broke, remove it
+                self.hotbar[self.selected_slot] = None;
+                return true;
+            }
+        }
+        false
+    }
 }
+

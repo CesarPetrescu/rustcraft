@@ -1,4 +1,4 @@
-use crate::block::BlockType;
+use crate::item::ItemType;
 use cgmath::{Point3, Vector3};
 
 /// Represents an item entity in the world (dropped item with physics)
@@ -6,7 +6,7 @@ use cgmath::{Point3, Vector3};
 pub struct ItemEntity {
     pub position: Point3<f32>,
     pub velocity: Vector3<f32>,
-    pub item_type: BlockType,
+    pub item: ItemType,
     pub age: f32,           // Time alive in seconds
     pub pickup_delay: f32,  // Time before can be picked up
     pub rotation: f32,      // Y-axis rotation for spinning effect
@@ -14,7 +14,7 @@ pub struct ItemEntity {
 
 impl ItemEntity {
     /// Creates a new item entity at the given position
-    pub fn new(position: Point3<f32>, item_type: BlockType) -> Self {
+    pub fn new(position: Point3<f32>, item: ItemType) -> Self {
         // Add small random velocity for "pop out" effect
         let random_x = (position.x * 12.9898).sin() * 43758.5453;
         let random_z = (position.z * 78.233).sin() * 43758.5453;
@@ -27,7 +27,7 @@ impl ItemEntity {
         Self {
             position,
             velocity,
-            item_type,
+            item,
             age: 0.0,
             pickup_delay: 0.5,  // 0.5 second delay before pickup
             rotation: 0.0,

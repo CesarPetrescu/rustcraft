@@ -1034,7 +1034,13 @@ impl<'window> Renderer<'window> {
         for entity in entities {
             let scale = 0.25; // Small item size
             let origin = Vector3::new(0.0, 0.0, 0.0);
-            let mut item_mesh = mesh::generate_block_mesh(entity.item_type, origin, scale);
+
+            // Get the block type to render (for tools, use stone as placeholder)
+            let block_to_render = match entity.item {
+                crate::item::ItemType::Block(block) => block,
+                crate::item::ItemType::Tool(_, _) => crate::block::BlockType::Stone, // TODO: Tool models
+            };
+            let mut item_mesh = mesh::generate_block_mesh(block_to_render, origin, scale);
 
             // Apply rotation (spin on Y axis)
             let rotation = Quaternion::from_angle_y(Rad(entity.rotation));
