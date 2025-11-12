@@ -23,6 +23,7 @@ pub enum BlockType {
     Resistor,
     VoltageSource,
     Ground,
+    Torch,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -221,7 +222,7 @@ pub struct BlockInfo {
     pub render_kind: RenderKind,
 }
 
-pub const VARIANT_COUNT: usize = 22;
+pub const VARIANT_COUNT: usize = 23;
 
 const BLOCK_INFOS: [BlockInfo; VARIANT_COUNT] = [
     BlockInfo {
@@ -421,6 +422,15 @@ const BLOCK_INFOS: [BlockInfo; VARIANT_COUNT] = [
         light_emission: 0.0,
         textures: TextureRule::uniform((19, 0)),
         render_kind: RenderKind::Electrical(ElectricalKind::Ground),
+    },
+    BlockInfo {
+        name: "Torch",
+        is_solid: false,
+        occludes: false,
+        hardness: 0.0,
+        light_emission: 0.93, // 14/15 light level (almost maximum)
+        textures: TextureRule::uniform((20, 0)),
+        render_kind: RenderKind::Cross,
     },
 ];
 

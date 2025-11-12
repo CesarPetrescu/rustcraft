@@ -1,7 +1,7 @@
 use crate::block::BlockType;
 
 pub const HOTBAR_SIZE: usize = 9;
-pub const AVAILABLE_BLOCKS: [BlockType; 17] = [
+pub const AVAILABLE_BLOCKS: [BlockType; 18] = [
     BlockType::Grass,
     BlockType::Dirt,
     BlockType::Stone,
@@ -14,6 +14,7 @@ pub const AVAILABLE_BLOCKS: [BlockType; 17] = [
     BlockType::Water,
     BlockType::FlowerRose,
     BlockType::FlowerTulip,
+    BlockType::Torch,
     BlockType::Snow,
     BlockType::CopperWire,
     BlockType::Resistor,

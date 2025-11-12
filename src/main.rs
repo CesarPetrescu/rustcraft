@@ -88,6 +88,8 @@ const CATEGORY_ORES: &[BlockType] = &[BlockType::CoalOre, BlockType::IronOre];
 
 const CATEGORY_FLUIDS: &[BlockType] = &[BlockType::Water];
 
+const CATEGORY_LIGHTS: &[BlockType] = &[BlockType::Torch, BlockType::GlowShroom];
+
 const CATEGORY_ELECTRICAL: &[BlockType] = &[
     BlockType::CopperWire,
     BlockType::Resistor,
@@ -111,6 +113,10 @@ const PALETTE_CATEGORIES: &[PaletteCategory] = &[
     PaletteCategory {
         name: "Ores",
         blocks: CATEGORY_ORES,
+    },
+    PaletteCategory {
+        name: "Lights",
+        blocks: CATEGORY_LIGHTS,
     },
     PaletteCategory {
         name: "Fluids",
