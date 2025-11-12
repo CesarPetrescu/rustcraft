@@ -11,6 +11,7 @@ struct VertexInput {
     @location(2) uv: vec2<f32>,
     @location(3) material: f32,
     @location(4) tint: vec3<f32>,
+    @location(5) light: f32,
 };
 
 struct VertexOutput {
@@ -20,6 +21,7 @@ struct VertexOutput {
     @location(2) material: f32,
     @location(3) world_pos: vec3<f32>,
     @location(4) tint: vec3<f32>,
+    @location(5) light: f32,
 };
 
 @group(1) @binding(0)
@@ -50,6 +52,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     output.material = input.material;
     output.world_pos = input.position;
     output.tint = input.tint;
+    output.light = input.light;
     return output;
 }
 
@@ -64,10 +67,17 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     let normal = normalize(input.normal);
     let light_dir = normalize(vec3<f32>(0.5, 1.0, 0.3));
     let daylight = environment.time_params.x;
-    let directional = clamp(dot(normal, light_dir), 0.0, 1.0);
+
+    // Per-block lighting (0-15 converted to 0.0-1.0)
+    let block_light = clamp(input.light / 15.0, 0.0, 1.0);
+
+    // Directional lighting for visual depth
+    let directional = clamp(dot(normal, light_dir), 0.0, 1.0) * 0.3;
+
+    // Combine block light with directional shading
     let ambient = environment.fog_params.y;
-    let light = directional * (0.6 + 0.4 * daylight) + ambient;
-    var color = base * light;
+    let light = (block_light * (0.8 + 0.2 * daylight)) + directional + ambient * 0.2;
+    var color = base * clamp(light, 0.0, 1.0);
 
     var alpha = albedo.a;
     if (input.material < 1.5) {

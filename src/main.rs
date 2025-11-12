@@ -5,6 +5,7 @@ mod electric;
 mod fluid_gpu;
 mod fluid_system;
 mod inventory;
+mod lighting;
 mod mesh;
 mod npu;
 mod profiler;
