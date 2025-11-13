@@ -1,5 +1,5 @@
 use crate::block::BlockType;
-use crate::item::{ItemType, ToolType};
+use crate::item::{ItemType, MaterialType, ToolType};
 
 /// Represents a crafting recipe
 #[derive(Clone, Debug)]
@@ -23,6 +23,7 @@ pub enum RecipePattern {
 pub enum RecipeIngredient {
     Block(BlockType),
     Tool(ToolType),
+    Material(MaterialType),
     /// Matches any item type (wildcard)
     Any,
 }
@@ -35,6 +36,9 @@ impl RecipeIngredient {
             }
             (RecipeIngredient::Tool(recipe_tool), ItemType::Tool(item_tool, _)) => {
                 recipe_tool == item_tool
+            }
+            (RecipeIngredient::Material(recipe_mat), ItemType::Material(item_mat)) => {
+                recipe_mat == item_mat
             }
             (RecipeIngredient::Any, _) => true,
             _ => false,
@@ -160,32 +164,33 @@ impl CraftingSystem {
 
     fn register_default_recipes(&mut self) {
         use BlockType::*;
-        use RecipeIngredient::Block as B;
+        use MaterialType::*;
+        use RecipeIngredient::{Block as B, Material as M};
         use ToolType::*;
 
         // Wood → 4 Planks (shapeless)
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shapeless(vec![B(Wood)]),
-            output: ItemType::Block(Wood), // TODO: Add Plank block type
+            output: ItemType::Material(Plank),
             output_count: 4,
         });
 
         // 2 Planks → 4 Sticks (vertical pattern)
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
-                vec![Some(B(Wood))],
-                vec![Some(B(Wood))],
+                vec![Some(M(Plank))],
+                vec![Some(M(Plank))],
             ]),
-            output: ItemType::Block(Wood), // TODO: Add Stick item
+            output: ItemType::Material(Stick),
             output_count: 4,
         });
 
         // Wooden Pickaxe: 3 planks + 2 sticks
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
-                vec![Some(B(Wood)), Some(B(Wood)), Some(B(Wood))],
-                vec![None, Some(B(Wood)), None],
-                vec![None, Some(B(Wood)), None],
+                vec![Some(M(Plank)), Some(M(Plank)), Some(M(Plank))],
+                vec![None, Some(M(Stick)), None],
+                vec![None, Some(M(Stick)), None],
             ]),
             output: ItemType::Tool(WoodenPickaxe, WoodenPickaxe.max_durability()),
             output_count: 1,
@@ -195,8 +200,8 @@ impl CraftingSystem {
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
                 vec![Some(B(Stone)), Some(B(Stone)), Some(B(Stone))],
-                vec![None, Some(B(Wood)), None],
-                vec![None, Some(B(Wood)), None],
+                vec![None, Some(M(Stick)), None],
+                vec![None, Some(M(Stick)), None],
             ]),
             output: ItemType::Tool(StonePickaxe, StonePickaxe.max_durability()),
             output_count: 1,
@@ -206,8 +211,8 @@ impl CraftingSystem {
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
                 vec![Some(B(IronOre)), Some(B(IronOre)), Some(B(IronOre))],
-                vec![None, Some(B(Wood)), None],
-                vec![None, Some(B(Wood)), None],
+                vec![None, Some(M(Stick)), None],
+                vec![None, Some(M(Stick)), None],
             ]),
             output: ItemType::Tool(IronPickaxe, IronPickaxe.max_durability()),
             output_count: 1,
@@ -216,9 +221,9 @@ impl CraftingSystem {
         // Wooden Axe
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
-                vec![Some(B(Wood)), Some(B(Wood))],
-                vec![Some(B(Wood)), None],
-                vec![None, Some(B(Wood))],
+                vec![Some(M(Plank)), Some(M(Plank))],
+                vec![Some(M(Plank)), None],
+                vec![None, Some(M(Stick))],
             ]),
             output: ItemType::Tool(WoodenAxe, WoodenAxe.max_durability()),
             output_count: 1,
@@ -228,8 +233,8 @@ impl CraftingSystem {
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
                 vec![Some(B(Stone)), Some(B(Stone))],
-                vec![Some(B(Wood)), None],
-                vec![Some(B(Wood)), None],
+                vec![Some(M(Stick)), None],
+                vec![Some(M(Stick)), None],
             ]),
             output: ItemType::Tool(StoneAxe, StoneAxe.max_durability()),
             output_count: 1,
@@ -238,9 +243,9 @@ impl CraftingSystem {
         // Wooden Shovel: 1 plank + 2 sticks
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
-                vec![Some(B(Wood))],
-                vec![Some(B(Wood))],
-                vec![Some(B(Wood))],
+                vec![Some(M(Plank))],
+                vec![Some(M(Stick))],
+                vec![Some(M(Stick))],
             ]),
             output: ItemType::Tool(WoodenShovel, WoodenShovel.max_durability()),
             output_count: 1,
@@ -250,8 +255,8 @@ impl CraftingSystem {
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
                 vec![Some(B(Stone))],
-                vec![Some(B(Wood))],
-                vec![Some(B(Wood))],
+                vec![Some(M(Stick))],
+                vec![Some(M(Stick))],
             ]),
             output: ItemType::Tool(StoneShovel, StoneShovel.max_durability()),
             output_count: 1,
@@ -261,7 +266,7 @@ impl CraftingSystem {
         self.recipes.push(Recipe {
             pattern: RecipePattern::Shaped(vec![
                 vec![Some(B(CoalOre))],
-                vec![Some(B(Wood))],
+                vec![Some(M(Stick))],
             ]),
             output: ItemType::Block(Torch),
             output_count: 4,
