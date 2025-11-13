@@ -56,11 +56,12 @@ impl Inventory {
         self.hotbar[self.selected_slot]
     }
 
-    /// Get selected block (for placement) - returns None if holding a tool
+    /// Get selected block (for placement) - returns None if holding a tool or material
     pub fn selected_block(&self) -> Option<BlockType> {
         match self.hotbar[self.selected_slot] {
             Some(ItemType::Block(block)) => Some(block),
             Some(ItemType::Tool(_, _)) => None,
+            Some(ItemType::Material(_)) => None,
             None => None,
         }
     }
@@ -103,6 +104,7 @@ impl Inventory {
                     .iter()
                     .position(|candidate| *candidate == block),
                 ItemType::Tool(_, _) => None,
+                ItemType::Material(_) => None,
             })
             .unwrap_or(0) as i32;
         let next_index = (current_index + delta).rem_euclid(total) as usize;

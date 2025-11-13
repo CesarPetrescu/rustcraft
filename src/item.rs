@@ -5,6 +5,23 @@ use crate::block::BlockType;
 pub enum ItemType {
     Block(BlockType),
     Tool(ToolType, u32), // ToolType and current durability
+    Material(MaterialType),
+}
+
+/// Material items (crafting ingredients that aren't blocks)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MaterialType {
+    Plank,
+    Stick,
+}
+
+impl MaterialType {
+    pub fn name(&self) -> &'static str {
+        match self {
+            MaterialType::Plank => "Plank",
+            MaterialType::Stick => "Stick",
+        }
+    }
 }
 
 impl ItemType {
@@ -12,6 +29,7 @@ impl ItemType {
         match self {
             ItemType::Block(block) => block.name(),
             ItemType::Tool(tool, _) => tool.name(),
+            ItemType::Material(material) => material.name(),
         }
     }
 
@@ -20,6 +38,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => 0,
             ItemType::Tool(tool, _) => tool.max_durability(),
+            ItemType::Material(_) => 0,
         }
     }
 
@@ -28,6 +47,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => 0,
             ItemType::Tool(_, dur) => *dur,
+            ItemType::Material(_) => 0,
         }
     }
 
@@ -36,6 +56,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => false, // Blocks don't mine faster
             ItemType::Tool(tool, _) => tool.is_effective_for(block),
+            ItemType::Material(_) => false,
         }
     }
 
@@ -44,6 +65,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => 1.0, // Hand speed
             ItemType::Tool(tool, _) => tool.mining_speed_multiplier(),
+            ItemType::Material(_) => 1.0,
         }
     }
 
@@ -59,6 +81,7 @@ impl ItemType {
                     true // Already broken
                 }
             }
+            ItemType::Material(_) => false,
         }
     }
 }

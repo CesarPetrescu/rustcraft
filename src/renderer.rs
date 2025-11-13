@@ -1035,10 +1035,11 @@ impl<'window> Renderer<'window> {
             let scale = 0.25; // Small item size
             let origin = Vector3::new(0.0, 0.0, 0.0);
 
-            // Get the block type to render (for tools, use stone as placeholder)
+            // Get the block type to render (for tools, use stone as placeholder; for materials, use wood)
             let block_to_render = match entity.item {
                 crate::item::ItemType::Block(block) => block,
                 crate::item::ItemType::Tool(_, _) => crate::block::BlockType::Stone, // TODO: Tool models
+                crate::item::ItemType::Material(_) => crate::block::BlockType::Wood, // TODO: Material models
             };
             let mut item_mesh = mesh::generate_block_mesh(block_to_render, origin, scale);
 

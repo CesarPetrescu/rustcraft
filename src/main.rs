@@ -331,6 +331,10 @@ struct State<'window> {
     crafting_open: bool,
     crafting_grid: [Option<ItemType>; 9],
     crafting_system: CraftingSystem,
+    crafting_cursor_pos: Option<(f32, f32)>,
+    crafting_hover_grid_slot: Option<usize>,
+    crafting_hover_hotbar_slot: Option<usize>,
+    crafting_hover_output: bool,
 }
 
 impl<'window> State<'window> {
@@ -855,6 +859,10 @@ impl<'window> State<'window> {
             crafting_open: false,
             crafting_grid: [None; 9],
             crafting_system: CraftingSystem::new(),
+            crafting_cursor_pos: None,
+            crafting_hover_grid_slot: None,
+            crafting_hover_hotbar_slot: None,
+            crafting_hover_output: false,
         };
 
         state.refresh_palette_filter();
@@ -956,6 +964,10 @@ impl<'window> State<'window> {
         }
 
         if self.inventory_open && self.handle_inventory_input(event) {
+            return true;
+        }
+
+        if self.crafting_open && self.handle_crafting_input(event) {
             return true;
         }
 
@@ -1136,6 +1148,102 @@ impl<'window> State<'window> {
             println!("Selected: {}", item.name());
         } else {
             println!("Selected: Empty");
+        }
+    }
+
+    fn handle_crafting_input(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                let size = self.window.inner_size();
+                if size.width == 0 || size.height == 0 {
+                    return false;
+                }
+                let norm_x = (position.x as f32 / size.width as f32).clamp(0.0, 1.0);
+                let norm_y = (position.y as f32 / size.height as f32).clamp(0.0, 1.0);
+                let ui_point = self.ui_scaler.unproject((norm_x, norm_y));
+                self.crafting_cursor_pos = Some(ui_point);
+
+                // Update hover states (simplified for now)
+                self.crafting_hover_grid_slot = None;
+                self.crafting_hover_hotbar_slot = None;
+                self.crafting_hover_output = false;
+
+                false
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if *state == ElementState::Pressed && *button == MouseButton::Left {
+                    if let Some(cursor) = self.crafting_cursor_pos {
+                        // Calculate crafting UI layout positions (matching draw_crafting_overlay)
+                        let panel_width = ui_width(0.6);
+                        let panel_height = 0.7;
+                        let panel_x = 0.5 - panel_width * 0.5;
+                        let panel_y = 0.5 - panel_height * 0.5;
+                        let grid_start_x = panel_x + ui_width(0.08);
+                        let grid_start_y = panel_y + 0.15;
+                        let slot_size = 0.08;
+                        let slot_gap = 0.015;
+
+                        // Check if clicking on crafting grid (3x3)
+                        for row in 0..3 {
+                            for col in 0..3 {
+                                let idx = row * 3 + col;
+                                let x = grid_start_x + col as f32 * ui_width(slot_size + slot_gap);
+                                let y = grid_start_y + row as f32 * (slot_size + slot_gap);
+
+                                if cursor.0 >= x && cursor.0 <= x + ui_width(slot_size) &&
+                                   cursor.1 >= y && cursor.1 <= y + slot_size {
+                                    // Clicked on grid slot - toggle item from hotbar/remove
+                                    if self.crafting_grid[idx].is_some() {
+                                        // Remove item from grid, put back in inventory
+                                        if let Some(item) = self.crafting_grid[idx].take() {
+                                            if let Some(slot) = self.inventory.first_empty_slot() {
+                                                self.inventory.set_slot(slot, Some(item));
+                                                println!("Removed {} from crafting grid", item.name());
+                                            }
+                                        }
+                                    } else {
+                                        // Place selected hotbar item in grid
+                                        if let Some(item) = self.inventory.selected_item() {
+                                            self.crafting_grid[idx] = Some(item);
+                                            // Remove from hotbar
+                                            self.inventory.clear_slot(self.inventory.selected_slot_index());
+                                            println!("Placed {} in crafting grid", item.name());
+                                        }
+                                    }
+                                    self.mark_ui_dirty();
+                                    return true;
+                                }
+                            }
+                        }
+
+                        // Check if clicking on output slot
+                        let output_x = grid_start_x + ui_width(3.5 * (slot_size + slot_gap));
+                        let output_y = grid_start_y + (slot_size + slot_gap);
+
+                        if cursor.0 >= output_x && cursor.0 <= output_x + ui_width(slot_size) &&
+                           cursor.1 >= output_y && cursor.1 <= output_y + slot_size {
+                            // Clicked on output - craft the item
+                            if let Some((output_item, output_count)) =
+                                self.crafting_system.match_recipe(&self.crafting_grid) {
+                                // Clear crafting grid
+                                self.crafting_grid = [None; 9];
+                                // Add output to inventory
+                                if let Some(slot) = self.inventory.first_empty_slot() {
+                                    // For now, just add one item (TODO: handle output_count > 1)
+                                    self.inventory.set_slot(slot, Some(output_item));
+                                    println!("Crafted {} (x{})", output_item.name(), output_count);
+                                } else {
+                                    println!("Inventory full! Can't craft.");
+                                }
+                                self.mark_ui_dirty();
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            }
+            _ => false,
         }
     }
 
@@ -2238,6 +2346,17 @@ impl<'window> State<'window> {
                     };
                     ui.add_rect(icon_min, icon_max, tint);
                 }
+                Some(ItemType::Material(_material)) => {
+                    // TODO: Material rendering - for now show a brown placeholder
+                    let tint = if index == selected_slot {
+                        [0.7, 0.5, 0.3, 1.0]
+                    } else if self.inventory_cursor == index {
+                        [0.8, 0.6, 0.4, 1.0]
+                    } else {
+                        [0.6, 0.4, 0.2, 1.0]
+                    };
+                    ui.add_rect(icon_min, icon_max, tint);
+                }
                 None => {
                     ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.55]);
                 }
@@ -2720,6 +2839,10 @@ impl<'window> State<'window> {
                         // Tool placeholder
                         ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
                     }
+                    Some(ItemType::Material(_)) => {
+                        // Material placeholder
+                        ui.add_rect(icon_min, icon_max, [0.6, 0.4, 0.2, 1.0]);
+                    }
                     None => {
                         ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.5]);
                     }
@@ -2949,6 +3072,9 @@ impl<'window> State<'window> {
                 ItemType::Tool(_, _) => {
                     ui.add_rect((min_x, min_y), (max_x, max_y), [0.7, 0.7, 0.2, 0.92]);
                 }
+                ItemType::Material(_) => {
+                    ui.add_rect((min_x, min_y), (max_x, max_y), [0.6, 0.4, 0.2, 0.92]);
+                }
             }
             ui.add_rect((min_x, min_y), (max_x, max_y), [0.95, 0.98, 1.0, 0.32]);
         }
@@ -3028,6 +3154,9 @@ impl<'window> State<'window> {
                         ItemType::Tool(_, _) => {
                             ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
                         }
+                        ItemType::Material(_) => {
+                            ui.add_rect(icon_min, icon_max, [0.6, 0.4, 0.2, 1.0]);
+                        }
                     }
                 }
             }
@@ -3075,6 +3204,9 @@ impl<'window> State<'window> {
                 }
                 ItemType::Tool(_, _) => {
                     ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                }
+                ItemType::Material(_) => {
+                    ui.add_rect(icon_min, icon_max, [0.6, 0.4, 0.2, 1.0]);
                 }
             }
 

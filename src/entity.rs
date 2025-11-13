@@ -15,14 +15,32 @@ pub struct ItemEntity {
 impl ItemEntity {
     /// Creates a new item entity at the given position
     pub fn new(position: Point3<f32>, item: ItemType) -> Self {
-        // Add small random velocity for "pop out" effect
-        let random_x = (position.x * 12.9898).sin() * 43758.5453;
-        let random_z = (position.z * 78.233).sin() * 43758.5453;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        // Use system time + position for seed to get true randomness
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        let pos_seed = ((position.x * 1000.0) as i64 +
+                       (position.y * 1000.0) as i64 +
+                       (position.z * 1000.0) as i64) as u64;
+        let combined_seed = seed.wrapping_add(pos_seed);
+
+        // Simple LCG for random numbers
+        let mut rng = combined_seed;
+        let mut next_rand = || {
+            rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((rng >> 32) as f32) / (u32::MAX as f32)
+        };
+
         let velocity = Vector3::new(
-            (random_x.fract() - 0.5) * 2.0,  // Random X velocity (-1 to 1)
-            4.0,                              // Pop upward
-            (random_z.fract() - 0.5) * 2.0,  // Random Z velocity (-1 to 1)
+            (next_rand() - 0.5) * 2.0,  // Random X velocity (-1 to 1)
+            3.0 + next_rand() * 2.0,     // Pop upward (3-5)
+            (next_rand() - 0.5) * 2.0,  // Random Z velocity (-1 to 1)
         );
+
+        let rotation = next_rand() * 6.28;  // Random starting rotation
 
         Self {
             position,
@@ -30,7 +48,7 @@ impl ItemEntity {
             item,
             age: 0.0,
             pickup_delay: 0.5,  // 0.5 second delay before pickup
-            rotation: 0.0,
+            rotation,
         }
     }
 
