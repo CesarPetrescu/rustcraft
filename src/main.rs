@@ -2238,6 +2238,17 @@ impl<'window> State<'window> {
                     };
                     ui.add_rect(icon_min, icon_max, tint);
                 }
+                Some(ItemType::Stick) => {
+                    // TODO: Stick rendering - for now show a placeholder
+                    let tint = if index == selected_slot {
+                        [0.6, 0.4, 0.2, 1.0]
+                    } else if self.inventory_cursor == index {
+                        [0.7, 0.5, 0.3, 1.0]
+                    } else {
+                        [0.5, 0.3, 0.1, 1.0]
+                    };
+                    ui.add_rect(icon_min, icon_max, tint);
+                }
                 None => {
                     ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.55]);
                 }
@@ -2720,6 +2731,10 @@ impl<'window> State<'window> {
                         // Tool placeholder
                         ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
                     }
+                    Some(ItemType::Stick) => {
+                        // Stick placeholder
+                        ui.add_rect(icon_min, icon_max, [0.5, 0.3, 0.1, 1.0]);
+                    }
                     None => {
                         ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.5]);
                     }
@@ -2949,6 +2964,9 @@ impl<'window> State<'window> {
                 ItemType::Tool(_, _) => {
                     ui.add_rect((min_x, min_y), (max_x, max_y), [0.7, 0.7, 0.2, 0.92]);
                 }
+                ItemType::Stick => {
+                    ui.add_rect((min_x, min_y), (max_x, max_y), [0.5, 0.3, 0.1, 0.92]);
+                }
             }
             ui.add_rect((min_x, min_y), (max_x, max_y), [0.95, 0.98, 1.0, 0.32]);
         }
@@ -3028,6 +3046,9 @@ impl<'window> State<'window> {
                         ItemType::Tool(_, _) => {
                             ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
                         }
+                        ItemType::Stick => {
+                            ui.add_rect(icon_min, icon_max, [0.5, 0.3, 0.1, 1.0]);
+                        }
                     }
                 }
             }
@@ -3075,6 +3096,9 @@ impl<'window> State<'window> {
                 }
                 ItemType::Tool(_, _) => {
                     ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                }
+                ItemType::Stick => {
+                    ui.add_rect(icon_min, icon_max, [0.5, 0.3, 0.1, 1.0]);
                 }
             }
 
@@ -3908,7 +3932,7 @@ impl<'window> State<'window> {
             );
         } else {
             self.renderer.update_hand(
-                self.inventory.selected_block(),
+                self.inventory.selected_item(),
                 &self.camera,
                 self.animation_time,
                 self.breaking_progress,

@@ -5,6 +5,7 @@ use crate::block::BlockType;
 pub enum ItemType {
     Block(BlockType),
     Tool(ToolType, u32), // ToolType and current durability
+    Stick,
 }
 
 impl ItemType {
@@ -12,6 +13,7 @@ impl ItemType {
         match self {
             ItemType::Block(block) => block.name(),
             ItemType::Tool(tool, _) => tool.name(),
+            ItemType::Stick => "Stick",
         }
     }
 
@@ -20,6 +22,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => 0,
             ItemType::Tool(tool, _) => tool.max_durability(),
+            ItemType::Stick => 0,
         }
     }
 
@@ -28,6 +31,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => 0,
             ItemType::Tool(_, dur) => *dur,
+            ItemType::Stick => 0,
         }
     }
 
@@ -36,6 +40,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => false, // Blocks don't mine faster
             ItemType::Tool(tool, _) => tool.is_effective_for(block),
+            ItemType::Stick => false,
         }
     }
 
@@ -44,6 +49,7 @@ impl ItemType {
         match self {
             ItemType::Block(_) => 1.0, // Hand speed
             ItemType::Tool(tool, _) => tool.mining_speed_multiplier(),
+            ItemType::Stick => 1.0,
         }
     }
 
@@ -59,6 +65,7 @@ impl ItemType {
                     true // Already broken
                 }
             }
+            ItemType::Stick => false,
         }
     }
 }
@@ -179,7 +186,7 @@ impl ToolType {
             // Axes are effective for wood
             ToolType::WoodenAxe | ToolType::StoneAxe
             | ToolType::IronAxe | ToolType::DiamondAxe => {
-                matches!(block, BlockType::Wood)
+                matches!(block, BlockType::Wood | BlockType::OakPlank)
             }
 
             // Shovels are effective for dirt, sand, gravel

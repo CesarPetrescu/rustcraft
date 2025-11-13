@@ -2,11 +2,12 @@ use crate::block::BlockType;
 use crate::item::ItemType;
 
 pub const HOTBAR_SIZE: usize = 9;
-pub const AVAILABLE_BLOCKS: [BlockType; 18] = [
+pub const AVAILABLE_BLOCKS: [BlockType; 19] = [
     BlockType::Grass,
     BlockType::Dirt,
     BlockType::Stone,
     BlockType::Wood,
+    BlockType::OakPlank,
     BlockType::Sand,
     BlockType::Leaves,
     BlockType::CoalOre,
@@ -61,6 +62,7 @@ impl Inventory {
         match self.hotbar[self.selected_slot] {
             Some(ItemType::Block(block)) => Some(block),
             Some(ItemType::Tool(_, _)) => None,
+            Some(ItemType::Stick) => None,
             None => None,
         }
     }
@@ -103,6 +105,7 @@ impl Inventory {
                     .iter()
                     .position(|candidate| *candidate == block),
                 ItemType::Tool(_, _) => None,
+                ItemType::Stick => None,
             })
             .unwrap_or(0) as i32;
         let next_index = (current_index + delta).rem_euclid(total) as usize;
