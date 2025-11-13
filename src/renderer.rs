@@ -949,20 +949,27 @@ impl<'window> Renderer<'window> {
 
     pub fn update_hand(
         &mut self,
-        block_type: Option<BlockType>,
+        held_item: Option<crate::item::ItemType>,
         camera: &Camera,
         animation_time: f32,
         breaking_progress: f32,
         placement_progress: f32,
     ) {
-        let Some(block_type) = block_type else {
+        use crate::item::ItemType;
+
+        let Some(held_item) = held_item else {
             self.hand_index_count = 0;
             return;
         };
 
         let scale = 0.18;
         let origin = Vector3::new(0.0, 0.0, 0.0);
-        let mut mesh = mesh::generate_block_mesh(block_type, origin, scale);
+
+        let mut mesh = match held_item {
+            ItemType::Block(block) => mesh::generate_block_mesh(block, origin, scale),
+            ItemType::Tool(_, _) => mesh::generate_block_mesh(BlockType::Stone, origin, scale), // Placeholder
+            ItemType::Stick => mesh::generate_block_mesh(BlockType::Wood, origin, scale * 0.5), // Smaller placeholder
+        };
 
         // Base hand position
         let mut hand_offset =
@@ -1037,10 +1044,17 @@ impl<'window> Renderer<'window> {
 
             // Get the block type to render (for tools, use stone as placeholder)
             let block_to_render = match entity.item {
-                crate::item::ItemType::Block(block) => block,
-                crate::item::ItemType::Tool(_, _) => crate::block::BlockType::Stone, // TODO: Tool models
+                crate::item::ItemType::Block(block) => Some(block),
+                crate::item::ItemType::Tool(_, _) => Some(crate::block::BlockType::Stone), // TODO: Tool models
+                crate::item::ItemType::Stick => None,
             };
-            let mut item_mesh = mesh::generate_block_mesh(block_to_render, origin, scale);
+
+            let mut item_mesh = if let Some(block) = block_to_render {
+                mesh::generate_block_mesh(block, origin, scale)
+            } else {
+                // Render stick as a smaller wood block
+                mesh::generate_block_mesh(crate::block::BlockType::Wood, origin, scale * 0.5)
+            };
 
             // Apply rotation (spin on Y axis)
             let rotation = Quaternion::from_angle_y(Rad(entity.rotation));

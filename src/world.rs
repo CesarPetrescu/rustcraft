@@ -933,9 +933,10 @@ impl World {
                     }
 
                     // Evaporate very small amounts
+                    // Evaporate very small amounts that are suspended in the air
                     if amount <= FLUID_MIN_FLOW && y > 0 {
                         let below_block = self.get_block(world_x, world_y - 1, world_z);
-                        if !below_block.is_solid() || self.get_fluid_amount(world_x, world_y - 1, world_z) == 0 {
+                        if !below_block.is_solid() && self.get_fluid_amount(world_x, world_y - 1, world_z) == 0 {
                             updates.push((x, y, z, 0));
                             any_changed = true;
                         }
