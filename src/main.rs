@@ -1,10 +1,14 @@
 mod block;
 mod camera;
 mod chunk;
+mod crafting;
 mod electric;
+mod entity;
 mod fluid_gpu;
 mod fluid_system;
 mod inventory;
+mod item;
+mod lighting;
 mod mesh;
 mod npu;
 mod profiler;
@@ -21,9 +25,12 @@ use anyhow::Context;
 use camera::{
     Camera, CameraController, Projection, PLAYER_EYE_HEIGHT, PLAYER_HEIGHT, PLAYER_RADIUS,
 };
-use cgmath::{point3, Rad, Vector3};
+use cgmath::{point3, Point3, Rad, Vector3};
+use crafting::CraftingSystem;
+use entity::ItemEntity;
 use fluid_system::FluidSystem;
 use inventory::{Inventory, AVAILABLE_BLOCKS, HOTBAR_SIZE};
+use item::ItemType;
 use renderer::{Renderer, UiVertex};
 use winit::{
     event::*,
@@ -87,6 +94,8 @@ const CATEGORY_ORES: &[BlockType] = &[BlockType::CoalOre, BlockType::IronOre];
 
 const CATEGORY_FLUIDS: &[BlockType] = &[BlockType::Water];
 
+const CATEGORY_LIGHTS: &[BlockType] = &[BlockType::Torch, BlockType::GlowShroom];
+
 const CATEGORY_ELECTRICAL: &[BlockType] = &[
     BlockType::CopperWire,
     BlockType::Resistor,
@@ -110,6 +119,10 @@ const PALETTE_CATEGORIES: &[PaletteCategory] = &[
     PaletteCategory {
         name: "Ores",
         blocks: CATEGORY_ORES,
+    },
+    PaletteCategory {
+        name: "Lights",
+        blocks: CATEGORY_LIGHTS,
     },
     PaletteCategory {
         name: "Fluids",
@@ -268,7 +281,7 @@ struct State<'window> {
     inventory_palette_hover: Option<usize>,
     inventory_cursor_pos: Option<(f32, f32)>,
     inventory_drag_origin: Option<usize>,
-    inventory_drag_block: Option<BlockType>,
+    inventory_drag_block: Option<ItemType>,
     inventory_swap_slot: Option<usize>,
     inventory_last_hover_slot: Option<usize>,
     inventory_last_hover_palette: Option<usize>,
@@ -306,11 +319,23 @@ struct State<'window> {
     settings_active_slider: Option<SettingsSlider>,
     settings_fov_slider: Cell<Option<Rect>>,
     settings_sensitivity_slider: Cell<Option<Rect>>,
+    // Block breaking state
+    breaking_block: Option<(i32, i32, i32)>,
+    breaking_progress: f32,
+    left_mouse_held: bool,
+    // Hand animation state
+    placement_progress: f32,
+    // Item entities
+    entities: Vec<ItemEntity>,
+    // Crafting system
+    crafting_open: bool,
+    crafting_grid: [Option<ItemType>; 9],
+    crafting_system: CraftingSystem,
 }
 
 impl<'window> State<'window> {
     fn is_in_menu(&self) -> bool {
-        self.paused || self.inventory_open || self.config_editor.is_some() || self.settings_open
+        self.paused || self.inventory_open || self.config_editor.is_some() || self.settings_open || self.crafting_open
     }
 
     fn mark_ui_dirty(&mut self) {
@@ -418,6 +443,42 @@ impl<'window> State<'window> {
         self.exit_menu_mode_if_needed();
         self.mark_ui_dirty();
         println!("Inventory closed.");
+    }
+
+    fn open_crafting(&mut self) {
+        if self.crafting_open {
+            return;
+        }
+        if self.paused {
+            self.close_pause();
+        }
+        if self.inventory_open {
+            self.close_inventory();
+        }
+        self.enter_menu_mode();
+        self.crafting_open = true;
+        self.crafting_grid = [None; 9];
+        self.mark_ui_dirty();
+        println!("Crafting opened (press C to close).");
+    }
+
+    fn close_crafting(&mut self) {
+        if !self.crafting_open {
+            return;
+        }
+        // Return items from crafting grid to inventory
+        for item in self.crafting_grid.iter_mut() {
+            if let Some(i) = item.take() {
+                if let Some(slot) = self.inventory.first_empty_slot() {
+                    self.inventory.set_slot(slot, Some(i));
+                }
+                // If no empty slot, item is lost (could drop as entity instead)
+            }
+        }
+        self.crafting_open = false;
+        self.exit_menu_mode_if_needed();
+        self.mark_ui_dirty();
+        println!("Crafting closed.");
     }
 
     fn open_settings(&mut self) {
@@ -786,6 +847,14 @@ impl<'window> State<'window> {
             settings_active_slider: None,
             settings_fov_slider: Cell::new(None),
             settings_sensitivity_slider: Cell::new(None),
+            breaking_block: None,
+            breaking_progress: 0.0,
+            left_mouse_held: false,
+            placement_progress: 0.0,
+            entities: Vec::new(),
+            crafting_open: false,
+            crafting_grid: [None; 9],
+            crafting_system: CraftingSystem::new(),
         };
 
         state.refresh_palette_filter();
@@ -863,6 +932,14 @@ impl<'window> State<'window> {
                             }
                             return true;
                         }
+                        KeyCode::KeyC => {
+                            if self.crafting_open {
+                                self.close_crafting();
+                            } else if !self.paused {
+                                self.open_crafting();
+                            }
+                            return true;
+                        }
                         KeyCode::KeyT => {
                             if self.toggle_config_editor() {
                                 return true;
@@ -900,15 +977,25 @@ impl<'window> State<'window> {
                         self.set_mouse_grab(true);
                         return true;
                     }
-                } else if *state == ElementState::Pressed {
+                } else {
                     match button {
                         MouseButton::Left => {
-                            self.break_block();
-                            return true;
+                            if *state == ElementState::Pressed {
+                                self.left_mouse_held = true;
+                                return true;
+                            } else {
+                                self.left_mouse_held = false;
+                                // Reset breaking state when mouse released
+                                self.breaking_block = None;
+                                self.breaking_progress = 0.0;
+                                return true;
+                            }
                         }
                         MouseButton::Right => {
-                            self.place_block();
-                            return true;
+                            if *state == ElementState::Pressed {
+                                self.place_block();
+                                return true;
+                            }
                         }
                         _ => {}
                     }
@@ -1045,8 +1132,8 @@ impl<'window> State<'window> {
     }
 
     fn print_selected(&self) {
-        if let Some(block) = self.inventory.selected_block() {
-            println!("Selected: {}", block.name());
+        if let Some(item) = self.inventory.selected_item() {
+            println!("Selected: {}", item.name());
         } else {
             println!("Selected: Empty");
         }
@@ -1067,6 +1154,23 @@ impl<'window> State<'window> {
                 self.mark_block_dirty(hit.block_pos.0, hit.block_pos.1, hit.block_pos.2);
                 self.refresh_inspect_info();
             } else {
+                // Get the block type before breaking
+                let block = self.world.get_block(
+                    hit.block_pos.0,
+                    hit.block_pos.1,
+                    hit.block_pos.2,
+                );
+
+                // Spawn item entity if block is droppable
+                if block != BlockType::Air && block != BlockType::Water {
+                    let item_pos = Point3::new(
+                        hit.block_pos.0 as f32 + 0.5,
+                        hit.block_pos.1 as f32 + 0.5,
+                        hit.block_pos.2 as f32 + 0.5,
+                    );
+                    self.entities.push(ItemEntity::new(item_pos, ItemType::Block(block)));
+                }
+
                 self.world.set_block(
                     hit.block_pos.0,
                     hit.block_pos.1,
@@ -1148,6 +1252,8 @@ impl<'window> State<'window> {
                     );
                 }
                 self.mark_block_dirty(place_pos.0, place_pos.1, place_pos.2);
+                // Trigger placement animation
+                self.placement_progress = 1.0;
             }
         }
     }
@@ -1168,6 +1274,8 @@ impl<'window> State<'window> {
         );
         self.mark_block_dirty(hit.block_pos.0, hit.block_pos.1, hit.block_pos.2);
         self.refresh_inspect_info();
+        // Trigger placement animation
+        self.placement_progress = 1.0;
     }
 
     fn mark_block_dirty(&mut self, world_x: i32, _world_y: i32, world_z: i32) {
@@ -1545,7 +1653,7 @@ impl<'window> State<'window> {
                     self.inventory_hover_slot = slot_hover;
                     if let Some(slot) = slot_hover {
                         let description = self.inventory.hotbar[slot]
-                            .map(|block| block.name())
+                            .map(|item| item.name())
                             .unwrap_or("Empty");
                         if self.inventory_last_hover_slot != Some(slot) {
                             println!("Hovering hotbar slot {} ({})", slot + 1, description);
@@ -1625,7 +1733,7 @@ impl<'window> State<'window> {
                 self.inventory.select_slot(slot);
                 self.inventory.cycle_slot_block(slot, direction);
                 let description = self.inventory.hotbar[slot]
-                    .map(|block| block.name())
+                    .map(|item| item.name())
                     .unwrap_or("Empty");
                 println!("Slot {} set to {}.", slot + 1, description);
                 self.print_selected();
@@ -1699,7 +1807,7 @@ impl<'window> State<'window> {
                                         .first_empty_slot()
                                         .unwrap_or(self.inventory_cursor)
                                         .min(HOTBAR_SIZE - 1);
-                                    self.inventory.set_slot(target_slot, Some(block));
+                                    self.inventory.set_slot(target_slot, Some(ItemType::Block(block)));
                                     self.inventory_cursor = target_slot;
                                     self.inventory.select_slot(target_slot);
                                     self.print_selected();
@@ -1762,7 +1870,7 @@ impl<'window> State<'window> {
                                     .inventory_hover_slot
                                     .unwrap_or(self.inventory_cursor)
                                     .min(HOTBAR_SIZE - 1);
-                                self.inventory.set_slot(slot, Some(block));
+                                self.inventory.set_slot(slot, Some(ItemType::Block(block)));
                                 println!("Slot {} set to {}.", slot + 1, block.name());
                                 self.inventory_cursor = slot;
                                 self.inventory.select_slot(slot);
@@ -1776,11 +1884,11 @@ impl<'window> State<'window> {
                             self.inventory_cursor = slot;
                             self.inventory.select_slot(slot);
                             self.print_selected();
-                            if let Some(block) = self.inventory.hotbar[slot] {
+                            if let Some(item) = self.inventory.hotbar[slot] {
                                 self.inventory_drag_origin = Some(slot);
-                                self.inventory_drag_block = Some(block);
+                                self.inventory_drag_block = Some(item);
                                 self.inventory.set_slot(slot, None);
-                                println!("Picked up {} from slot {}.", block.name(), slot + 1);
+                                println!("Picked up {} from slot {}.", item.name(), slot + 1);
                             }
                             self.inventory_swap_slot = None;
                             self.mark_ui_dirty();
@@ -1790,11 +1898,11 @@ impl<'window> State<'window> {
                         false
                     }
                     (ElementState::Released, MouseButton::Left) => {
-                        if let Some(block) = self.inventory_drag_block.take() {
+                        if let Some(item) = self.inventory_drag_block.take() {
                             let origin = self.inventory_drag_origin.take();
                             if let Some(slot) = self.inventory_hover_slot {
                                 let previous = self.inventory.hotbar[slot];
-                                self.inventory.set_slot(slot, Some(block));
+                                self.inventory.set_slot(slot, Some(item));
                                 if let Some(origin_slot) = origin {
                                     if origin_slot != slot {
                                         self.inventory.set_slot(origin_slot, previous);
@@ -1802,7 +1910,7 @@ impl<'window> State<'window> {
                                 }
                                 self.inventory_cursor = slot;
                                 self.inventory.select_slot(slot);
-                                println!("Placed {} in slot {}.", block.name(), slot + 1);
+                                println!("Placed {} in slot {}.", item.name(), slot + 1);
                                 self.print_selected();
                             } else if let Some(index) = self.inventory_palette_hover {
                                 if let Some(new_block) =
@@ -1811,26 +1919,26 @@ impl<'window> State<'window> {
                                     let target_slot = origin
                                         .unwrap_or(self.inventory_cursor)
                                         .min(HOTBAR_SIZE - 1);
-                                    self.inventory.set_slot(target_slot, Some(new_block));
+                                    self.inventory.set_slot(target_slot, Some(ItemType::Block(new_block)));
                                     self.inventory_cursor = target_slot;
                                     self.inventory.select_slot(target_slot);
                                     println!(
                                         "Replaced slot {} with {} (was {}).",
                                         target_slot + 1,
                                         new_block.name(),
-                                        block.name()
+                                        item.name()
                                     );
                                     self.print_selected();
                                 }
                             } else if let Some(origin_slot) = origin {
-                                self.inventory.set_slot(origin_slot, Some(block));
+                                self.inventory.set_slot(origin_slot, Some(item));
                                 self.inventory_cursor = origin_slot;
                                 self.inventory.select_slot(origin_slot);
                                 self.print_selected();
                             } else {
                                 let slot = self.inventory_cursor.min(HOTBAR_SIZE - 1);
-                                self.inventory.set_slot(slot, Some(block));
-                                println!("Slot {} set to {}.", slot + 1, block.name());
+                                self.inventory.set_slot(slot, Some(item));
+                                println!("Slot {} set to {}.", slot + 1, item.name());
                                 self.inventory.select_slot(slot);
                                 self.print_selected();
                             }
@@ -1861,7 +1969,7 @@ impl<'window> State<'window> {
                             {
                                 let slot =
                                     self.inventory_hover_slot.unwrap_or(self.inventory_cursor);
-                                self.inventory.set_slot(slot, Some(block));
+                                self.inventory.set_slot(slot, Some(ItemType::Block(block)));
                                 println!("Slot {} set to {}.", slot + 1, block.name());
                                 self.inventory_cursor = slot;
                                 self.inventory.select_slot(slot);
@@ -2108,17 +2216,31 @@ impl<'window> State<'window> {
             let icon_min = (slot_min.0 + icon_pad_x, slot_min.1 + icon_pad_y);
             let icon_max = (slot_max.0 - icon_pad_x, slot_max.1 - icon_pad_y);
 
-            if let Some(block) = slot {
-                let tint = if index == selected_slot {
-                    [1.0, 0.96, 0.86, 1.0]
-                } else if self.inventory_cursor == index {
-                    [1.0, 0.98, 0.92, 1.0]
-                } else {
-                    [1.0, 1.0, 1.0, 1.0]
-                };
-                ui.add_rect_textured(icon_min, icon_max, block.atlas_coords(BlockFace::Top), tint);
-            } else {
-                ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.55]);
+            match slot {
+                Some(ItemType::Block(block)) => {
+                    let tint = if index == selected_slot {
+                        [1.0, 0.96, 0.86, 1.0]
+                    } else if self.inventory_cursor == index {
+                        [1.0, 0.98, 0.92, 1.0]
+                    } else {
+                        [1.0, 1.0, 1.0, 1.0]
+                    };
+                    ui.add_rect_textured(icon_min, icon_max, block.atlas_coords(BlockFace::Top), tint);
+                }
+                Some(ItemType::Tool(_, _)) => {
+                    // TODO: Tool rendering - for now show a placeholder
+                    let tint = if index == selected_slot {
+                        [0.8, 0.8, 0.2, 1.0]
+                    } else if self.inventory_cursor == index {
+                        [0.9, 0.9, 0.3, 1.0]
+                    } else {
+                        [0.7, 0.7, 0.2, 1.0]
+                    };
+                    ui.add_rect(icon_min, icon_max, tint);
+                }
+                None => {
+                    ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.55]);
+                }
             }
 
             let label_pos = (slot_min.0 + ui_width(0.004), slot_max.1 - 0.014);
@@ -2585,15 +2707,22 @@ impl<'window> State<'window> {
                 let icon_min = (min.0 + icon_pad_x, min.1 + icon_pad_y);
                 let icon_max = (max.0 - icon_pad_x, max.1 - icon_pad_y);
 
-                if let Some(block) = self.inventory.hotbar[idx] {
-                    ui.add_rect_textured(
-                        icon_min,
-                        icon_max,
-                        block.atlas_coords(BlockFace::Top),
-                        [1.0, 1.0, 1.0, 1.0],
-                    );
-                } else {
-                    ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.5]);
+                match self.inventory.hotbar[idx] {
+                    Some(ItemType::Block(block)) => {
+                        ui.add_rect_textured(
+                            icon_min,
+                            icon_max,
+                            block.atlas_coords(BlockFace::Top),
+                            [1.0, 1.0, 1.0, 1.0],
+                        );
+                    }
+                    Some(ItemType::Tool(_, _)) => {
+                        // Tool placeholder
+                        ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                    }
+                    None => {
+                        ui.add_rect(icon_min, icon_max, [0.08, 0.09, 0.12, 0.5]);
+                    }
                 }
 
                 ui.add_text(
@@ -2748,7 +2877,7 @@ impl<'window> State<'window> {
                 {
                     color = [0.58, 0.4, 0.34, 0.92];
                 }
-                if self.inventory.hotbar[self.inventory_cursor] == Some(*block) {
+                if self.inventory.hotbar[self.inventory_cursor] == Some(ItemType::Block(*block)) {
                     color = [0.36, 0.44, 0.62, 0.9];
                 }
                 ui.add_panel(
@@ -2799,7 +2928,7 @@ impl<'window> State<'window> {
             "Scroll over the palette to browse, type to search, and press Enter/Esc to exit search.",
         );
 
-        if let (Some(block), Some(cursor)) = (self.inventory_drag_block, self.inventory_cursor_pos)
+        if let (Some(item), Some(cursor)) = (self.inventory_drag_block, self.inventory_cursor_pos)
         {
             let half_y = DRAG_ICON_SIZE * 0.5;
             let half_x = ui_width(half_y);
@@ -2808,15 +2937,167 @@ impl<'window> State<'window> {
             let min_y = (cursor.1 - half_y).clamp(0.0, 1.0 - DRAG_ICON_SIZE);
             let max_x = (min_x + icon_width).min(0.995);
             let max_y = (min_y + DRAG_ICON_SIZE).min(0.995);
-            ui.add_rect_textured(
-                (min_x, min_y),
-                (max_x, max_y),
-                block.atlas_coords(BlockFace::Top),
-                [1.0, 1.0, 1.0, 0.92],
-            );
+            match item {
+                ItemType::Block(block) => {
+                    ui.add_rect_textured(
+                        (min_x, min_y),
+                        (max_x, max_y),
+                        block.atlas_coords(BlockFace::Top),
+                        [1.0, 1.0, 1.0, 0.92],
+                    );
+                }
+                ItemType::Tool(_, _) => {
+                    ui.add_rect((min_x, min_y), (max_x, max_y), [0.7, 0.7, 0.2, 0.92]);
+                }
+            }
             ui.add_rect((min_x, min_y), (max_x, max_y), [0.95, 0.98, 1.0, 0.32]);
         }
     }
+
+    fn draw_crafting_overlay(&self, ui: &mut UiGeometry) {
+        // Darken background
+        ui.add_rect_fullscreen((0.0, 0.0), (1.0, 1.0), [0.0, 0.0, 0.0, 0.72]);
+
+        // Crafting panel
+        let panel_width = ui_width(0.6);
+        let panel_height = 0.7;
+        let panel_x = 0.5 - panel_width * 0.5;
+        let panel_y = 0.5 - panel_height * 0.5;
+
+        ui.add_panel(
+            (panel_x, panel_y),
+            (panel_x + panel_width, panel_y + panel_height),
+            [0.12, 0.14, 0.22, 0.96],
+            [0.18, 0.20, 0.28, 0.94],
+            Some([0.24, 0.28, 0.38, 0.4]),
+        );
+
+        // Title
+        ui.add_text(
+            (panel_x + ui_width(0.03), panel_y + 0.03),
+            0.024,
+            [0.88, 0.92, 1.0, 1.0],
+            "CRAFTING TABLE",
+        );
+
+        ui.add_text(
+            (panel_x + ui_width(0.03), panel_y + 0.06),
+            0.014,
+            [0.7, 0.75, 0.88, 1.0],
+            "Press C to close. Click items in your hotbar to place in grid.",
+        );
+
+        // 3x3 crafting grid
+        let grid_start_x = panel_x + ui_width(0.08);
+        let grid_start_y = panel_y + 0.15;
+        let slot_size = 0.08;
+        let slot_gap = 0.015;
+
+        for row in 0..3 {
+            for col in 0..3 {
+                let idx = row * 3 + col;
+                let x = grid_start_x + col as f32 * ui_width(slot_size + slot_gap);
+                let y = grid_start_y + row as f32 * (slot_size + slot_gap);
+                let min = (x, y);
+                let max = (x + ui_width(slot_size), y + slot_size);
+
+                // Slot background
+                ui.add_panel(
+                    min,
+                    max,
+                    [0.08, 0.09, 0.13, 0.96],
+                    [0.14, 0.16, 0.22, 0.92],
+                    None,
+                );
+
+                // Draw item in slot
+                if let Some(item) = self.crafting_grid[idx] {
+                    let icon_pad = 0.008;
+                    let icon_min = (min.0 + ui_width(icon_pad), min.1 + icon_pad);
+                    let icon_max = (max.0 - ui_width(icon_pad), max.1 - icon_pad);
+
+                    match item {
+                        ItemType::Block(block) => {
+                            ui.add_rect_textured(
+                                icon_min,
+                                icon_max,
+                                block.atlas_coords(BlockFace::Top),
+                                [1.0, 1.0, 1.0, 1.0],
+                            );
+                        }
+                        ItemType::Tool(_, _) => {
+                            ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Output slot
+        let output_x = grid_start_x + ui_width(3.5 * (slot_size + slot_gap));
+        let output_y = grid_start_y + (slot_size + slot_gap);
+        let output_min = (output_x, output_y);
+        let output_max = (output_x + ui_width(slot_size), output_y + slot_size);
+
+        // Arrow
+        let arrow_x = grid_start_x + ui_width(3.0 * (slot_size + slot_gap));
+        let arrow_y = grid_start_y + (slot_size + slot_gap) + slot_size * 0.35;
+        ui.add_text(
+            (arrow_x, arrow_y),
+            0.024,
+            [0.65, 0.7, 0.85, 1.0],
+            "->",
+        );
+
+        // Output slot background
+        ui.add_panel(
+            output_min,
+            output_max,
+            [0.28, 0.32, 0.42, 0.96],
+            [0.22, 0.26, 0.36, 0.92],
+            Some([0.32, 0.38, 0.52, 0.5]),
+        );
+
+        // Check for recipe match and draw output
+        if let Some((output_item, output_count)) = self.crafting_system.match_recipe(&self.crafting_grid) {
+            let icon_pad = 0.008;
+            let icon_min = (output_min.0 + ui_width(icon_pad), output_min.1 + icon_pad);
+            let icon_max = (output_max.0 - ui_width(icon_pad), output_max.1 - icon_pad);
+
+            match output_item {
+                ItemType::Block(block) => {
+                    ui.add_rect_textured(
+                        icon_min,
+                        icon_max,
+                        block.atlas_coords(BlockFace::Top),
+                        [1.0, 1.0, 1.0, 1.0],
+                    );
+                }
+                ItemType::Tool(_, _) => {
+                    ui.add_rect(icon_min, icon_max, [0.7, 0.7, 0.2, 1.0]);
+                }
+            }
+
+            // Show count if > 1
+            if output_count > 1 {
+                ui.add_text(
+                    (output_max.0 - ui_width(0.02), output_max.1 - 0.02),
+                    0.014,
+                    [1.0, 1.0, 1.0, 1.0],
+                    &format!("{}", output_count),
+                );
+            }
+        }
+
+        // Recipe count info
+        ui.add_text(
+            (panel_x + ui_width(0.03), panel_y + panel_height - 0.05),
+            0.012,
+            [0.6, 0.65, 0.8, 0.9],
+            &format!("{} recipes available", self.crafting_system.recipe_count()),
+        );
+    }
+
     fn build_ui_geometry(&self) -> UiGeometry {
         let mut ui = UiGeometry::new(self.ui_scaler);
 
@@ -2874,6 +3155,10 @@ impl<'window> State<'window> {
 
         if self.inventory_open {
             self.draw_inventory_overlay(&mut ui);
+        }
+
+        if self.crafting_open {
+            self.draw_crafting_overlay(&mut ui);
         }
 
         if self.settings_open {
@@ -3354,6 +3639,93 @@ impl<'window> State<'window> {
         }
         self.projection.animate(tick_dt);
 
+        // Handle block breaking
+        if !in_menu && self.left_mouse_held {
+            let direction = self.crosshair_direction();
+            if let Some(hit) = raycast(&self.world, self.camera.position, direction, 5.0) {
+                let target_pos = hit.block_pos;
+
+                // Check if we're still targeting the same block
+                if self.breaking_block != Some(target_pos) {
+                    // Started breaking a different block, reset progress
+                    self.breaking_block = Some(target_pos);
+                    self.breaking_progress = 0.0;
+                }
+
+                // Get block hardness to determine breaking speed
+                let block = self.world.get_block(target_pos.0, target_pos.1, target_pos.2);
+                let hardness = block.hardness().max(0.1); // Minimum 0.1 to avoid division by zero
+
+                // Get tool effectiveness multiplier
+                let selected_item = self.inventory.selected_item();
+                let tool_multiplier = selected_item.map(|item| {
+                    if item.is_effective_for(block) {
+                        item.mining_speed_multiplier()
+                    } else {
+                        // Not effective, but still gets some speed bonus
+                        item.mining_speed_multiplier() * 0.5
+                    }
+                }).unwrap_or(1.0); // Hand mining = 1x speed
+
+                // Breaking speed: softer blocks break faster, better tools mine faster
+                // Base breaking time: 1 second for hardness=1.0 with hand
+                let break_speed = (1.0 / hardness) * tool_multiplier;
+                self.breaking_progress += break_speed * tick_dt;
+
+                // If fully broken, remove the block
+                if self.breaking_progress >= 1.0 {
+                    // Damage tool if using one
+                    if let Some(ItemType::Tool(_, _)) = selected_item {
+                        if self.inventory.damage_selected_tool() {
+                            println!("Your tool broke!");
+                        }
+                    }
+
+                    self.break_block();
+                    self.breaking_block = None;
+                    self.breaking_progress = 0.0;
+                }
+            } else {
+                // Not looking at any block, reset breaking
+                self.breaking_block = None;
+                self.breaking_progress = 0.0;
+            }
+        } else {
+            // Mouse not held, ensure state is reset
+            self.breaking_block = None;
+            self.breaking_progress = 0.0;
+        }
+
+        // Decay placement animation (animation lasts ~0.3 seconds)
+        if self.placement_progress > 0.0 {
+            self.placement_progress -= tick_dt * 3.3; // Decay rate
+            if self.placement_progress < 0.0 {
+                self.placement_progress = 0.0;
+            }
+        }
+
+        // Update item entities (physics and lifetime)
+        self.entities.retain_mut(|entity| entity.update(tick_dt, &self.world));
+
+        // Item pickup logic (when not in menu)
+        if !in_menu {
+            let player_pos = self.camera.position;
+            self.entities.retain(|entity| {
+                if entity.can_pickup() && entity.in_pickup_range(player_pos) {
+                    // Try to add to inventory
+                    if let Some(empty_slot) = self.inventory.first_empty_slot() {
+                        self.inventory.set_slot(empty_slot, Some(entity.item));
+                        println!("Picked up {}!", entity.item.name());
+                        false // Remove entity
+                    } else {
+                        true // Keep entity (inventory full)
+                    }
+                } else {
+                    true // Keep entity
+                }
+            });
+        }
+
         self.world.advance_time(tick_dt);
 
         // Increment tick counters
@@ -3520,14 +3892,28 @@ impl<'window> State<'window> {
         };
         self.renderer
             .update_power_overlays(&power_instances, self.animation_time);
-        self.renderer.update_highlight(highlight_bounds);
+        self.renderer.update_highlight(highlight_bounds, self.breaking_progress);
         self.update_inspect_state(new_highlight, new_info);
 
+        // Update item entities
+        self.renderer.update_entities(&self.entities);
+
         if in_menu {
-            self.renderer.update_hand(None, &self.camera);
+            self.renderer.update_hand(
+                None,
+                &self.camera,
+                self.animation_time,
+                0.0,
+                0.0,
+            );
         } else {
-            self.renderer
-                .update_hand(self.inventory.selected_block(), &self.camera);
+            self.renderer.update_hand(
+                self.inventory.selected_block(),
+                &self.camera,
+                self.animation_time,
+                self.breaking_progress,
+                self.placement_progress,
+            );
         }
 
         if !in_menu && self.world_dirty {

@@ -14,6 +14,8 @@ pub struct Chunk {
     blocks: [Block; CHUNK_VOLUME],
     fluids: [u8; CHUNK_VOLUME],
     cell_state: Vec<i16>,
+    /// Packed lighting: upper 4 bits = skylight (0-15), lower 4 bits = blocklight (0-15)
+    lighting: [u8; CHUNK_VOLUME],
 }
 
 impl Chunk {
@@ -22,6 +24,7 @@ impl Chunk {
             blocks: [Block::default(); CHUNK_VOLUME],
             fluids: [0; CHUNK_VOLUME],
             cell_state: vec![0; CHUNK_VOLUME],
+            lighting: [0; CHUNK_VOLUME], // Initially dark, will be calculated
         };
         chunk.rebuild_cell_state();
         chunk
@@ -142,6 +145,49 @@ impl Chunk {
         for idx in 0..self.cell_state.len() {
             self.update_cell_state(idx);
         }
+    }
+
+    /// Get skylight level (0-15) at position
+    pub fn get_skylight(&self, x: usize, y: usize, z: usize) -> u8 {
+        if x < CHUNK_SIZE && y < CHUNK_HEIGHT && z < CHUNK_SIZE {
+            let light = self.lighting[index(x, y, z)];
+            (light >> 4) & 0xF
+        } else {
+            0
+        }
+    }
+
+    /// Get blocklight level (0-15) at position
+    pub fn get_blocklight(&self, x: usize, y: usize, z: usize) -> u8 {
+        if x < CHUNK_SIZE && y < CHUNK_HEIGHT && z < CHUNK_SIZE {
+            let light = self.lighting[index(x, y, z)];
+            light & 0xF
+        } else {
+            0
+        }
+    }
+
+    /// Set skylight level (0-15) at position
+    pub fn set_skylight(&mut self, x: usize, y: usize, z: usize, level: u8) {
+        if x < CHUNK_SIZE && y < CHUNK_HEIGHT && z < CHUNK_SIZE {
+            let idx = index(x, y, z);
+            let level = level.min(15);
+            self.lighting[idx] = (self.lighting[idx] & 0x0F) | (level << 4);
+        }
+    }
+
+    /// Set blocklight level (0-15) at position
+    pub fn set_blocklight(&mut self, x: usize, y: usize, z: usize, level: u8) {
+        if x < CHUNK_SIZE && y < CHUNK_HEIGHT && z < CHUNK_SIZE {
+            let idx = index(x, y, z);
+            let level = level.min(15);
+            self.lighting[idx] = (self.lighting[idx] & 0xF0) | level;
+        }
+    }
+
+    /// Get combined light level (max of skylight and blocklight)
+    pub fn get_light(&self, x: usize, y: usize, z: usize) -> u8 {
+        self.get_skylight(x, y, z).max(self.get_blocklight(x, y, z))
     }
 }
 

@@ -24,6 +24,7 @@ pub struct Vertex {
     pub uv: [f32; 2],
     pub material: f32,
     pub tint: [f32; 3],
+    pub light: f32, // Combined light level (0-15)
 }
 
 pub struct MeshData {
@@ -210,6 +211,7 @@ fn emit_connection_plate(
             uv: [u_min, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [
@@ -221,6 +223,7 @@ fn emit_connection_plate(
             uv: [u_max, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [
@@ -232,6 +235,7 @@ fn emit_connection_plate(
             uv: [u_max, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [
@@ -243,6 +247,7 @@ fn emit_connection_plate(
             uv: [u_min, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
     ];
 
@@ -324,7 +329,7 @@ pub fn generate_block_mesh(block: BlockType, origin: Vector3<f32>, scale: f32) -
             ];
 
             for (face, normal) in faces {
-                let quad = build_face(face, normal, block, origin_array, half_extent);
+                let quad = build_face(face, normal, block, origin_array, half_extent, 15);
                 mesh.push_quad(quad);
             }
         }
@@ -410,12 +415,15 @@ fn append_solid_block(
 
     for (face, (nx, ny, nz), normal) in neighbors.iter() {
         if !world.get_block(*nx, *ny, *nz).occludes() {
+            // Sample light at the block's own position
+            let light = world.get_light(x, y, z);
             let quad = build_face(
                 *face,
                 *normal,
                 block,
                 [x as f32, y as f32, z as f32],
                 HALF_BLOCK,
+                light,
             );
             mesh.push_quad(quad);
         }
@@ -428,11 +436,13 @@ fn build_face(
     block: BlockType,
     origin: [f32; 3],
     half_extent: f32,
+    light: u8,
 ) -> [Vertex; 4] {
     let (tile_x, tile_y) = block.atlas_coords(face);
     let (u_min, u_max, v_min, v_max) = atlas_uv_bounds(tile_x, tile_y);
     let material = material_for_block(block);
     let (ox, oy, oz) = (origin[0], origin[1], origin[2]);
+    let light_f32 = light as f32;
 
     let (p0, p1, p2, p3) = match face {
         BlockFace::Top => (
@@ -480,6 +490,7 @@ fn build_face(
             uv: [u_min, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: light_f32,
         },
         Vertex {
             position: p1,
@@ -487,6 +498,7 @@ fn build_face(
             uv: [u_max, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: light_f32,
         },
         Vertex {
             position: p2,
@@ -494,6 +506,7 @@ fn build_face(
             uv: [u_max, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: light_f32,
         },
         Vertex {
             position: p3,
@@ -501,6 +514,7 @@ fn build_face(
             uv: [u_min, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: light_f32,
         },
     ]
 }
@@ -543,6 +557,7 @@ fn append_cross_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockT
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
             Vertex {
                 position: positions[1],
@@ -551,6 +566,7 @@ fn append_cross_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockT
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
             Vertex {
                 position: positions[2],
@@ -559,6 +575,7 @@ fn append_cross_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockT
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
             Vertex {
                 position: positions[3],
@@ -567,6 +584,7 @@ fn append_cross_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockT
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
         ]);
     }
@@ -995,6 +1013,7 @@ fn append_flat_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockTy
             uv: [u_min, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [cx - HALF_BLOCK, y, cz + HALF_BLOCK],
@@ -1002,6 +1021,7 @@ fn append_flat_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockTy
             uv: [u_min, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [cx + HALF_BLOCK, y, cz + HALF_BLOCK],
@@ -1009,6 +1029,7 @@ fn append_flat_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockTy
             uv: [u_max, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [cx + HALF_BLOCK, y, cz - HALF_BLOCK],
@@ -1016,6 +1037,7 @@ fn append_flat_block(mesh: &mut MeshData, x: i32, y: i32, z: i32, block: BlockTy
             uv: [u_max, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
     ]);
 }
@@ -1058,6 +1080,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [top_u_min, top_v_min],
                 material,
                 tint,
+                light: 15.0,
             },
             Vertex {
                 position: [cx + HALF_BLOCK, top, cz - HALF_BLOCK],
@@ -1065,6 +1088,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [top_u_max, top_v_min],
                 material,
                 tint,
+                light: 15.0,
             },
             Vertex {
                 position: [cx + HALF_BLOCK, top, cz + HALF_BLOCK],
@@ -1072,6 +1096,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [top_u_max, top_v_max],
                 material,
                 tint,
+                light: 15.0,
             },
             Vertex {
                 position: [cx - HALF_BLOCK, top, cz + HALF_BLOCK],
@@ -1079,6 +1104,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [top_u_min, top_v_max],
                 material,
                 tint,
+                light: 15.0,
             },
         ]);
     }
@@ -1163,6 +1189,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [u_min, v_min],
                 material,
                 tint,
+                light: 15.0,
             },
             Vertex {
                 position: p1,
@@ -1170,6 +1197,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [u_max, v_min],
                 material,
                 tint,
+                light: 15.0,
             },
             Vertex {
                 position: p2,
@@ -1177,6 +1205,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [u_max, v_max],
                 material,
                 tint,
+                light: 15.0,
             },
             Vertex {
                 position: p3,
@@ -1184,6 +1213,7 @@ fn append_fluid_block(mesh: &mut MeshData, world: &World, x: i32, y: i32, z: i32
                 uv: [u_min, v_max],
                 material,
                 tint,
+                light: 15.0,
             },
         ];
 
@@ -1234,6 +1264,7 @@ fn append_cross_billboard(
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
             Vertex {
                 position: positions[1],
@@ -1242,6 +1273,7 @@ fn append_cross_billboard(
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
             Vertex {
                 position: positions[2],
@@ -1250,6 +1282,7 @@ fn append_cross_billboard(
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
             Vertex {
                 position: positions[3],
@@ -1258,6 +1291,7 @@ fn append_cross_billboard(
                 material,
 
                 tint: [1.0, 1.0, 1.0],
+            light: 15.0,
             },
         ]);
     }
@@ -1283,6 +1317,7 @@ fn append_flat_billboard(
             uv: [u_min, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [cx + half_extent, y, cz - half_extent],
@@ -1290,6 +1325,7 @@ fn append_flat_billboard(
             uv: [u_max, v_min],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [cx + half_extent, y, cz + half_extent],
@@ -1297,6 +1333,7 @@ fn append_flat_billboard(
             uv: [u_max, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
         Vertex {
             position: [cx - half_extent, y, cz + half_extent],
@@ -1304,6 +1341,7 @@ fn append_flat_billboard(
             uv: [u_min, v_max],
             material,
             tint: [1.0, 1.0, 1.0],
+            light: 15.0,
         },
     ]);
 }
@@ -2513,6 +2551,7 @@ fn push_oriented_box_faces(
             uv: [u_min + u0 * du, v_min + v0 * dv],
             material,
             tint,
+                light: 15.0,
         };
         let vertex1 = Vertex {
             position: [world1.x, world1.y, world1.z],
@@ -2520,6 +2559,7 @@ fn push_oriented_box_faces(
             uv: [u_min + u1 * du, v_min + v1 * dv],
             material,
             tint,
+                light: 15.0,
         };
         let vertex2 = Vertex {
             position: [world2.x, world2.y, world2.z],
@@ -2527,6 +2567,7 @@ fn push_oriented_box_faces(
             uv: [u_min + u2 * du, v_min + v2 * dv],
             material,
             tint,
+                light: 15.0,
         };
         let vertex3 = Vertex {
             position: [world3.x, world3.y, world3.z],
@@ -2534,6 +2575,7 @@ fn push_oriented_box_faces(
             uv: [u_min + u3 * du, v_min + v3 * dv],
             material,
             tint,
+                light: 15.0,
         };
 
         mesh.push_quad([vertex0, vertex1, vertex2, vertex3]);
